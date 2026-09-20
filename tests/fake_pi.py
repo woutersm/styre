@@ -14,6 +14,8 @@ import os
 import re
 import sys
 import time
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 SKIP_MARKER = "@pytest.mark.skip"
@@ -52,6 +54,24 @@ def transcript(text):
     emit({"type": "turn_end", "toolResults": []})
     emit({"type": "agent_end", "messages": [], "willRetry": False})
     emit({"type": "agent_settled"})
+
+
+def write_session(session_dir, name):
+    """Save a session the way pi does: `<iso>_<uuid>.jsonl` in --session-dir, with --name in
+    a session_info line. Verified against pi 0.85.1."""
+    if not session_dir:
+        return
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%S-%f")[:-3] + "Z"
+    path = Path(session_dir) / f"{stamp}_{uuid.uuid4()}.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"type": "session", "version": 3, "id": "fake"}) + "\n"
+                    + json.dumps({"type": "session_info", "name": name}) + "\n",
+                    encoding="utf-8")
+
+
+def flag(name):
+    args = sys.argv[1:]
+    return args[args.index(name) + 1] if name in args and args.index(name) + 1 < len(args) else None
 
 
 def write_state(n, status="DONE", reason="", unmet=(), rounds=0):
@@ -106,11 +126,15 @@ def act(action, n):
 
 
 def main():
+    if "--version" in sys.argv[1:]:
+        print("0.85.1-fake")  # a probe, not a run: touch nothing in the working tree
+        return
     prompt = next((a[1:] for a in sys.argv[1:] if a.startswith("@")), "")
     name = Path(prompt).name
     plan = json.loads(os.environ.get("FAKE_PI_PLAN", "{}"))
     action = plan.get(name, os.environ.get("FAKE_PI_DEFAULT", "ok"))
     n = int(re.search(r"phase(\d+)", name).group(1)) if re.search(r"phase(\d+)", name) else 1
+    write_session(flag("--session-dir"), flag("--name"))
     transcript(f"Ran {name} with action {action}.")
     act(action, n)
 

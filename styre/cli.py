@@ -1,4 +1,4 @@
-"""Command line interface: the `check` and `run` subcommands."""
+"""Command line interface: the `check`, `run` and `summarize` subcommands."""
 import argparse
 import sys
 from pathlib import Path
@@ -6,12 +6,16 @@ from pathlib import Path
 from styre import __version__
 from styre.config import DEFAULT_GATE_TIMEOUT, DEFAULT_RETRIES, DEFAULT_TIMEOUT, RunOptions
 from styre.design import describe, parse_phases, validate
+from styre.rundir import resolve
 from styre.runner import PreflightError, orchestrate, preflight
+from styre.summarize import summarize
 
 EXAMPLES = """examples:
   styre check design.md                 validate the design and print what it will run
   styre run design.md                   run every phase, one commit each
   styre run design.md --from-phase 2    resume after a stop
+  styre summarize                       what happened in the last run
+  styre summarize 20260920-233014       ... in a particular one
 
 Run it from inside the target repository: styre switches branches and commits there.
 """
@@ -48,14 +52,25 @@ def cmd_run(args):
     opts = RunOptions(
         quiet=args.quiet, retries=args.retries, timeout=args.timeout,
         gate_timeout=args.gate_timeout, allow_test_changes=args.allow_test_changes,
-        from_phase=args.from_phase, branch=args.branch, allow_dirty=args.allow_dirty,
+        from_phase=args.from_phase, run_id=args.run_id, branch=args.branch,
+        allow_dirty=args.allow_dirty,
         reset_branch=args.reset_branch,
     )
     try:
-        preflight(args.design, opts)
+        run = preflight(args.design, opts)
     except PreflightError as e:
         sys.exit(str(e))
-    return orchestrate(args.design, phases, opts)
+    return orchestrate(args.design, phases, opts, run)
+
+
+def cmd_summarize(args):
+    run = resolve(args.run)
+    if run is None:
+        sys.exit(f"No such run: {args.run}." if args.run else
+                 "No runs found under .styre/runs/.")
+    print(summarize(run))
+    print(f"[styre] written to {run.root / 'summary.md'}")
+    return 0
 
 
 def build_parser():
@@ -74,6 +89,9 @@ def build_parser():
     run = sub.add_parser("run", help="run the design, one commit per phase")
     run.add_argument("design", help="the design document")
     run.add_argument("--from-phase", type=int, default=1, metavar="N", help="resume at phase N")
+    run.add_argument("--run-id", default=None, metavar="ID",
+                     help="write into .styre/runs/ID (default: a new run, or the latest one "
+                          "when resuming with --from-phase)")
     run.add_argument("--retries", type=int, default=DEFAULT_RETRIES,
                      help=f"fix rounds per phase after a failed gate (default {DEFAULT_RETRIES})")
     run.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT, metavar="SECONDS",
@@ -89,6 +107,11 @@ def build_parser():
     run.add_argument("--reset-branch", action="store_true",
                      help="discard an existing run branch and restart it at HEAD (destructive)")
     run.set_defaults(func=cmd_run)
+
+    summary = sub.add_parser("summarize", help="report what happened in a run")
+    summary.add_argument("run", nargs="?", default=None, metavar="RUN",
+                         help="a run id or directory (default: the latest run)")
+    summary.set_defaults(func=cmd_summarize)
     return ap
 
 

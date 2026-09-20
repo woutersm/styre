@@ -4,7 +4,23 @@ Only phase-specific material belongs here; the standing rules live in AGENTS.md,
 loads into every run. The prompt's fixed cost is amortised across phases, so it is worth
 bytes: the honesty rules around `unmet_criteria` earn their space.
 """
+import hashlib
+from pathlib import Path
+
+from styre.agents import AGENTS_BODY
 from styre.config import DECISIONS
+
+
+def template_hash():
+    """A hash of everything fixed in the instructions an agent gets: this module's source and
+    the AGENTS.md block. Recorded at run start, so a run whose prompts changed under it is
+    recognisable afterwards rather than a mystery."""
+    h = hashlib.sha256(AGENTS_BODY.encode("utf-8"))
+    try:
+        h.update(Path(__file__).read_bytes())
+    except OSError:  # no source on disk; the AGENTS.md block alone still tells them apart
+        pass
+    return h.hexdigest()[:16]
 
 
 def build_prompt(context, n, phase, decisions, notes):

@@ -34,6 +34,14 @@ def commit(message):
     return git("commit", "-q", "-m", message)[0]
 
 
+def current_branch():
+    return git("rev-parse", "--abbrev-ref", "HEAD")[1].strip()
+
+
+def head_sha():
+    return git("rev-parse", "HEAD")[1].strip()
+
+
 def branch_exists(branch):
     return git("rev-parse", "--verify", "--quiet", f"refs/heads/{branch}")[0] == 0
 

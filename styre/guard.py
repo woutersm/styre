@@ -7,6 +7,7 @@ import re
 
 from styre.gitops import stage_all, staged_diff
 from styre.process import run
+from styre.timeline import Timeline
 
 TEST_PATH = re.compile(r"(^|/)(tests?/|test_[^/]*\.py$|[^/]*\.(test|spec)\.[cm]?[jt]sx?$)")
 SKIP_RE = re.compile(r"pytest\.(mark\.)?(skip|xfail)|unittest\.skip"
@@ -40,16 +41,26 @@ def test_tampering(diff):
     return "\n".join(problems) or None
 
 
-def verify(phase, log, gate_timeout=None, allow_test_changes=False):
-    """Run the gate and the test guard. Return None when all pass, else (short reason, full report)."""
+def verify(phase, log, gate_timeout=None, allow_test_changes=False, timeline=None,
+           phase_n=None, step=None):
+    """Run the gate and the test guard. Return None when all pass, else (short reason, full report).
+
+    `phase_n` and `step` only tag the timeline events. The reader could infer them from the
+    preceding pi_end — the loop is serial — but a record that has to be reconstructed by
+    inference is one more thing to get wrong later.
+    """
+    tl = timeline or Timeline()
     for cmd in phase.gate:
-        rc, out = run(cmd, shell=True, log=log, timeout=gate_timeout or None)
+        with tl.span("gate", phase=phase_n, step=step, command=cmd) as end:
+            rc, out = run(cmd, shell=True, log=log, timeout=gate_timeout or None)
+            end["rc"] = rc
         if rc != 0:
             return (f"gate failed: {cmd[:60]}",
                     f"Gate command failed: `{cmd}` (exit code {rc}). Output tail:\n{out[-6000:]}")
     if not allow_test_changes:
         stage_all()
         problem = test_tampering(staged_diff())
+        tl.event("guard_result", phase=phase_n, step=step, ok=problem is None, problem=problem)
         if problem:
             return "test guard: skipped or removed tests", "Test guard: " + problem
     return None

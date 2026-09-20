@@ -6,9 +6,10 @@ The orchestrator has since been split into modules behind a `styre check` / `sty
 CLI, and T7's test suite exists. Put new work in the module that owns the concern, and
 add cases to `tests/` rather than only checking by hand.
 
-Everything below writes into a per-run directory, so **do T4 first** — the other tasks need
-its paths. T1–T3 can then be done in any order; T6 reads what they produce. T5 and T7 are
-independent of all of it.
+**T4, T3, T6 and T2 are done**: `styre/rundir.py` owns the run layout, `styre/timeline.py`
+the record of what the orchestrator did, `styre/summarize.py` reads both back, and pi's own
+sessions now land in the run directory. What is left is T5 (a pi preflight), the loose ends
+in T1 and T7, and T8 if it is ever wanted.
 
 T0 (get real pi working, capture JSON samples) is **done**: pi 0.85.1 works, samples are in
 `tests/fixtures/`, and the verified event schema is in `CLAUDE.md`.
@@ -17,21 +18,33 @@ Keep every existing behavior working. Python stdlib only.
 
 ---
 
-## T4. One directory per run — do this first
+## T4. One directory per run — done
 
-Today logs append across runs and prompts are overwritten, so two runs cannot be compared.
+Logs used to append across runs and prompts were overwritten, so two runs could not be
+compared. `styre/rundir.py` now owns the layout; `runner.py` asks it for every path.
 
-- [ ] Create `.styre/runs/<YYYYmmdd-HHMMSS>/` at run start; put prompts, logs,
-      sessions, events, `timeline.jsonl` and `report.md` under it.
-- [ ] Move `notes-next.md` and the `phaseN.state.json` files into the run directory.
-- [ ] A new run starts with no carried-over notes.
-- [ ] Leave `docs/decisions.md` where it is: it is committed with the code and is deliberately
-      per-project, not per-run.
-- [ ] Write `.styre/latest.txt` containing the run id (a file, **not** a symlink —
-      Windows).
-- [ ] `--from-phase N` continues in the latest run by default.
-- [ ] Add `--run-id` to select a different run.
-- [ ] Update the `.git/info/exclude` entries if the layout changes.
+- [x] ~~Create `.styre/runs/<YYYYmmdd-HHMMSS>/` at run start; put prompts, logs,
+      events and `report.md` under it.~~ Done: `new_run()`, `RunDir`. `RunDir.timeline` is
+      the path T3 writes; T2 adds `sessions/` when it passes `--session-dir`.
+- [x] ~~Move `notes-next.md` and the `phaseN.state.json` files into the run directory.~~
+      Done, but **the agent's own paths did not move**. It still writes the short
+      `.styre/phaseN.state.json` and `.styre/notes-next.md` that AGENTS.md names — a
+      committed AGENTS.md cannot name a run id — and `collect()` moves both into the run
+      directory once pi stops. `clear_inbox()` empties them before each run, so a stale file
+      can never be read as this phase's result.
+- [x] ~~A new run starts with no carried-over notes.~~ Done: notes are read from
+      `<run>/phase{N-1}.notes-next.md`, which does not exist in a fresh run directory. They
+      are stored per phase rather than as one overwritten file, so resuming at phase N reads
+      what phase N-1 handed over even when a later phase already ran.
+- [x] ~~Leave `docs/decisions.md` where it is.~~ Done, untouched.
+- [x] ~~Write `.styre/latest.txt` containing the run id (a file, **not** a symlink —
+      Windows).~~ Done, rewritten whenever a run is opened, new or resumed.
+- [x] ~~`--from-phase N` continues in the latest run by default.~~ Done; it warns and starts
+      a new run if there is no earlier one.
+- [x] ~~Add `--run-id` to select a different run.~~ Done. An unknown id is a preflight error,
+      not a silently created directory.
+- [x] ~~Update the `.git/info/exclude` entries if the layout changes.~~ Nothing to do:
+      `EXCLUDES` already carries `.styre/`, which covers `runs/`.
 
 ## T1. Stream pi output live, with our own timestamps — mostly done
 
@@ -52,55 +65,75 @@ has to stamp lines as they arrive.
       again.
 - [x] ~~Leave gate commands on `subprocess.run`.~~ Done.
 
-## T2. JSON mode, session directory and session name — partly done
+## T2. JSON mode, session directory and session name — done
 
-The invocation is the constant `PI = ["pi", "-p", "--mode", "json"]` and the event stream is
-parsed. The session directory and name are still not passed.
-
-- [ ] Invoke pi as
-      `pi --mode json --session-dir <run>/sessions/phaseN --name "<run-id> phase N <step>" ...`
-      so each step's transcript lands next to that run's logs.
+- [x] ~~Invoke pi as
+      `pi --mode json --session-dir <run>/sessions/phaseN --name "<run-id> phase N <step>" ...`~~
+      Done in `run_phase`. One directory per phase, one session file per step inside it.
 - [x] ~~Confirm `@file` works in JSON mode.~~ Verified against pi 0.85.1.
-- [ ] Note the documented session-dir precedence: `--session-dir`, then
-      `PI_CODING_AGENT_SESSION_DIR`, then `sessionDir` in settings.
+- [x] ~~Note the documented session-dir precedence.~~ In `CLAUDE.md`, under the pi reference.
 
-## T3. Timeline file
+Both flags were re-verified against real pi 0.85.1 before the code was written, not assumed:
+`--session-dir` gets `<iso>_<uuid>.jsonl`, and `--name` lands in `session_info.name` on the
+second line of that file. That probe also became `tests/fixtures/pi_usage.jsonl` — the first
+fixture with **real** token counts (`input 1560, output 23, cacheRead 6144, reasoning 0`),
+since every older one predates the provider fix and reads as zeros.
+
+## T3. Timeline file — done
 
 One JSON object per line in `<run>/timeline.jsonl`, appended and flushed as things happen.
-Every entry carries an ISO timestamp.
+Every entry carries an ISO timestamp. `styre/timeline.py` holds the writer; the full field
+list is in `CLAUDE.md` under "The timeline".
 
-- [ ] `run_start` — design file hash, hash of the prompt templates in the script, pi version,
-      branch
-- [ ] `pi_start` / `pi_end` — phase, step (`builder` or `fix N`), duration, return code
-- [ ] `gate_start` / `gate_end` — command, duration, return code
-- [ ] `guard_result` — the test-tampering guard's verdict
-- [ ] `commit` — sha
-- [ ] `phase_end` — status and reason
-- [ ] `run_end`
+- [x] ~~`run_start` — design file hash, hash of the prompt templates in the script, pi
+      version, branch~~ Done, plus the run id, styre version, phase count, `from_phase` and
+      `retries`. `pi_version` shells out to `pi --version` once per run.
+- [x] ~~`pi_start` / `pi_end` — phase, step (`builder` or `fix N`), duration, return code~~
+- [x] ~~`gate_start` / `gate_end` — command, duration, return code~~ Emitted by
+      `guard.verify()`, which now takes a `timeline`.
+- [x] ~~`guard_result` — the test-tampering guard's verdict~~ Done: `ok` and `problem`. It
+      is **absent**, not false, when `--allow-test-changes` turned the guard off.
+- [x] ~~`commit` — sha~~ Done, with the phase and subject.
+- [x] ~~`phase_end` — status and reason~~ Done, plus `rounds`, `fix_rounds_self` and
+      `unmet_criteria`, so T6 can compare self-corrected against visible rounds without
+      reading the state files.
+- [x] ~~`run_end`~~ Done: `exit_code`, `committed`, `stopped`.
+- [x] ~~Survive a killed run.~~ `span()` writes its end event from a `finally`, and every
+      line is flushed as it is written.
 
-## T6. `styre summarize <run-dir>`
+Note a resumed run appends to the timeline of the run it continues: one `run_start` per
+invocation, not per directory. T6 groups by them.
 
-A third subcommand in `styre/cli.py`, backed by a new `styre/summarize.py`. Stdlib only. Reads `timeline.jsonl`, the events files and, if present, the
-session JSONL.
+## T6. `styre summarize [<run-dir>]` — done
 
-- [ ] Per-phase table: time in agent runs, time in gates, number of fix rounds, final status.
-- [ ] Which gate command failed on each fix round — usually the sign of a missing exit
-      criterion.
-- [ ] Tool calls by tool name; tool errors (`tool_execution_end` with `isError: true`); the
-      longest tool calls, measured from our own timestamps between start and end events.
-- [ ] Tokens and cost from the final `message_end` usage. Do **not** sum `message_update`
-      usage — it is cumulative and can stay zero when a provider reports usage only at
-      completion.
-- [ ] Per-step token split: report `input`, `output`, and within output the thinking share as
-      `reasoning` against non-thinking `output - reasoning`. `usage.reasoning` is optional —
-      when the provider omits it, print "n/a", never `0`. Aggregate per phase and per run so
-      a phase that burned its budget on thinking is visible.
-- [ ] A "where to look" list: fix rounds and their reasons, `BLOCKED` reasons, and the
-      `unmet_criteria` from each `phaseN.state.json`.
-- [ ] Compare `fix_rounds_self` against orchestrator-visible fix rounds. A phase with high
-      self-corrected rounds and zero visible ones hit a gate the design under-specified.
-- [ ] Write `summary.md` into the run directory as well as printing.
-- [ ] Optional: `--compare runA runB`.
+A third subcommand in `styre/cli.py`, backed by a new `styre/summarize.py`. Stdlib only.
+Reads `timeline.jsonl`, the events files and, if present, the session JSONL. With no
+argument it summarises the run `.styre/latest.txt` names.
+
+`timeline.jsonl` is the spine — durations, return codes and the commit sha come from there,
+and the events files are only scanned for tools and tokens. So **T3 comes first**. Degrade
+to a partial summary when a file is missing rather than erroring: a run that died mid-phase
+is exactly the one worth summarising.
+
+- [x] ~~Per-phase table: time in agent runs, time in gates, number of fix rounds, final
+      status.~~ Done, with a totals row. `-` means nothing was measured; `0.0` means it was.
+- [x] ~~Which gate command failed on each fix round.~~ Done. `gate_*` events are tagged with
+      the phase and step at the producer, in `verify()`, rather than inferred by the reader
+      from the preceding `pi_end`.
+- [x] ~~Tool calls by tool name; tool errors; the longest tool calls, measured from our own
+      timestamps.~~ Done, paired by `toolCallId`. A call that never ended still counts.
+- [x] ~~Tokens from the `message_end` usage, never summing `message_update`.~~ Done: only
+      `message_end` is read, input is the last value, output a sum.
+- [x] ~~Per-step token split with `reasoning` optional and printed as "n/a", never `0`.~~
+      Done, per phase and as a run total.
+- [x] ~~A "where to look" list.~~ Done: failed gates, pi failures, guard verdicts, `BLOCKED`
+      reasons, unmet criteria and failed tool calls, per phase.
+- [x] ~~Compare `fix_rounds_self` against orchestrator-visible fix rounds.~~ Done, and a
+      phase that committed cleanly still appears when that gap is there — it is invisible in
+      the table, and it is the clearest sign of an under-specified criterion.
+- [x] ~~Write `summary.md` into the run directory as well as printing.~~ Done.
+- [ ] Parked: `--compare runA runB`. Nothing has needed it yet; two `summarize` calls and a
+      diff answer the same question.
 
 Keep this script deterministic. It must not call a model: counting tokens, measuring
 durations and deciding which gate failed are exactly the things an agent's own account gets
@@ -152,7 +185,8 @@ pytest, using a `fake_pi.py` test double installed as `pi` on PATH.
       a skip marker; `BLOCKED`; a pi timeout; pi missing from PATH; resume with
       `--from-phase`.~~ Done in `tests/test_run_end_to_end.py`, plus a crashing agent, a
       dirty tree, a phase that stages nothing, and `DONE` with unmet criteria.
-- [ ] Cover the new artifacts from T1–T6.
+- [x] ~~Cover the new artifacts from T1–T6.~~ Run directories, the timeline, summarize and
+      the per-step session files are all covered.
 - [ ] No test uses real uv yet; the fixture gate is `test -f done.txt`, so the suite skips on
       Windows.
 
@@ -160,9 +194,14 @@ pytest, using a `fake_pi.py` test double installed as `pi` on PATH.
 
 - [ ] `styre run example-design.md` in a fresh git repo, with `fake_pi.py` as
       `pi`, ends with two commits. The run directory holds prompts, logs, sessions, events,
-      `timeline.jsonl` and `report.md`.
+      `timeline.jsonl` and `report.md`. Everything but the real-pi part is covered by
+      `tests/test_run_end_to_end.py`; running it against real pi is the open half.
 - [ ] While it runs, `tail -f <run>/logs/*.events.jsonl` shows lines as they arrive.
-- [ ] `styre summarize <run-dir>` prints the table and writes `summary.md`.
+- [x] ~~`styre summarize <run-dir>` prints the table and writes `summary.md`.~~ Covered in
+      `tests/test_run_end_to_end.py`; the parsers are tested against `tests/fixtures/` in
+      `tests/test_summarize.py`.
+- [x] ~~Two consecutive runs leave two directories under `.styre/runs/`, neither overwriting
+      the other.~~ Covered in `tests/test_run_end_to_end.py`.
 - [ ] The same flow works against real pi on `example-design.md`.
 
 ## Parked — ask before starting

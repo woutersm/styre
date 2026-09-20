@@ -16,7 +16,7 @@ BEGIN, END = "<!-- styre:begin -->", "<!-- styre:end -->"
 EXCLUDES = [".styre/", "__pycache__/", ".pytest_cache/", ".ruff_cache/", "*.pyc", "node_modules/", ".venv/"]
 
 DEFAULT_RETRIES = 2
-DEFAULT_TIMEOUT = 5400
+DEFAULT_TIMEOUT = 7200  # 2 h; a real phase was measured at ~60 min, so 90 was too tight
 DEFAULT_GATE_TIMEOUT = 900
 
 
@@ -30,6 +30,7 @@ class RunOptions:
     gate_timeout: int = DEFAULT_GATE_TIMEOUT
     allow_test_changes: bool = False
     from_phase: int = 1
+    run_id: str | None = None
     branch: str | None = None
     allow_dirty: bool = False
     reset_branch: bool = False

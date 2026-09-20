@@ -17,7 +17,7 @@ committed on a red gate.
 
 | File | What it is |
 | --- | --- |
-| `styre/cli.py` | Argument parsing, the `check` and `run` subcommands. The `styre` console script points here. |
+| `styre/cli.py` | Argument parsing, the `check`, `run` and `summarize` subcommands. The `styre` console script points here. |
 | `styre/config.py` | Constants (`PI`, `WORK`, `DECISIONS`, `AGENTS`, `EXCLUDES`) and the `RunOptions` bundle. |
 | `styre/design.py` | Parsing a design into `Phase` objects; `preamble()` and `phase_context()`; `validate()`; the `check` rendering. |
 | `styre/prompts.py` | `build_prompt()` and `fix_prompt()`. |
@@ -25,14 +25,17 @@ committed on a red gate.
 | `styre/process.py` | `run()` for gates, `stream_pi()` for the agent, `render_event()`, `kill_tree()`. |
 | `styre/gitops.py` | Every git call. |
 | `styre/guard.py` | `verify()` — the gate — and `test_tampering()`. |
+| `styre/rundir.py` | The per-run directory `.styre/runs/<id>/`: its paths, `latest.txt`, and collecting the agent's two files into it. |
 | `styre/state.py` | Reading and judging `phaseN.state.json`. |
+| `styre/summarize.py` | Reading a finished run back off disk: the `summarize` subcommand. Calls no model. |
+| `styre/timeline.py` | `Timeline`: the append-and-flush writer behind `<run>/timeline.jsonl`. |
 | `styre/runner.py` | `preflight()` and the phase loop (`run_phase`, `orchestrate`). |
 | `orchestrate.py` | Deprecated shim mapping the old single-command form onto the subcommands. |
 | `pyproject.toml` | Packaging and the `styre` entry point; ruff and pytest config. No runtime dependencies. |
 | `example-design.md` | Two-phase example design (a `wordfreq` CLI; uv, pytest, ruff) for testing. |
-| `TODO.md` | Tracked next steps: per-run directories, live-streamed pi output, JSON mode and sessions, a timeline file, and a `summarize` command. |
+| `TODO.md` | Tracked next steps: sessions per run, a pi preflight, and an optional pi-written narrative. |
 | `tests/` | pytest suite. `fake_pi.py` is a test double installed on `PATH` as `pi`, so the whole loop runs without a model. |
-| `tests/fixtures/*.jsonl` | Real captured pi JSON output: a plain reply, a run with a bash tool call, and a saved session file. Write every parser against these, not against assumptions. |
+| `tests/fixtures/*.jsonl` | Real captured pi JSON output: a plain reply, a run with a bash tool call, a saved session file, and `pi_usage.jsonl` with real token counts. Write every parser against these, not against assumptions. |
 
 The `styre` package is the source of truth for how things behave today.
 
@@ -76,18 +79,23 @@ is a hard error.
    full — not the other phases' bodies), the accumulated `docs/decisions.md`, the previous
    phase's `notes-next.md`, and this phase's criteria and gate. It points at AGENTS.md rather
    than restating the rules.
-2. Start a fresh pi process: `pi -p --mode json @<prompt-file> "Follow the instructions in the
-   attached file."` — the constant `PI`, not configurable, under `--timeout` (default 5400 s),
+2. Start a fresh pi process: `pi -p --mode json --session-dir <run>/sessions/phaseN --name
+   "<run-id> phase N <step>" @<prompt-file> "Follow the instructions in the attached file."`
+   — the constant `PI` plus the two per-step session flags, under `--timeout` (default 7200 s),
    enforced by a watchdog timer rather than a deadline checked per line: the run that stalls
    a night is the one that stops printing. Output is read line by line. Each raw line is stamped with our own wall-clock time and appended to
-   `logs/phaseN.events.jsonl`; the condensed non-thinking rendering goes to the terminal in
-   grey and to `logs/phaseN.log`. Keep that split: the log is for reading (a few KB), the
+   `<run>/logs/phaseN.events.jsonl`; the condensed non-thinking rendering goes to the terminal in
+   grey and to `<run>/logs/phaseN.log`. Keep that split: the log is for reading (a few KB), the
    events file is for parsing (a few hundred KB per phase). Putting raw JSON in the log once
    made it 180 KB with the gate output buried at line 404.
 3. The agent ends by writing three files: `docs/decisions.md` (append-only, committed),
    `.styre/notes-next.md` (overwritten, read only by the next phase), and
    `.styre/phaseN.state.json` (`status`, `reason`, `unmet_criteria`, `fix_rounds_self`).
-   `DONE` together with a non-empty `unmet_criteria` is rejected as contradictory.
+   `DONE` together with a non-empty `unmet_criteria` is rejected as contradictory. Those two
+   short paths are a drop box, not the archive: once pi stops, `rundir.collect()` moves them
+   into the run directory as `phaseN.state.json` and `phaseN.notes-next.md`. The agent's
+   contract stays a stable path it can be told about in a committed `AGENTS.md`, which cannot
+   name a run id.
 4. On `DONE`, the orchestrator runs each gate command itself (`--gate-timeout`, default 900 s).
 5. It then runs a test-tampering guard over the staged diff: added skip/xfail markers, or a
    net removal of test functions, fail the phase. Disable with `--allow-test-changes`.
@@ -108,17 +116,26 @@ version has not changed. This has already cost one overnight run: on 2026-09-20 
 went out with the pre-scoping prompt builder, 66 KB prompts carrying all fifteen phases, because
 `uv tool install --force .` reinstalled the previous evening's wheel. `styre --version` and
 `styre check` were both green on it. Verify an install by behaviour — the size and content of
-`.styre/phaseN.prompt.md` — not by the command answering.
+`.styre/runs/<id>/phaseN.prompt.md` — not by the command answering.
+
+**So bump `__version__` in `styre/__init__.py` whenever behaviour changes.** The version is
+the cache key, and it is the only thing that makes `--force` actually rebuild. `pyproject.toml`
+reads it from the package (`dynamic = ["version"]`), so there is one number, not two that can
+drift. Every run records it in `run_start` and every `summary.md` prints it, which is how a
+stale install is recognisable in the morning instead of being a mystery.
 
 ```
 styre check design.md                  # print phases, criteria, gates; validate; exit
 styre run design.md                    # run every phase
-styre run design.md --from-phase 2     # resume after a stop
+styre run design.md --from-phase 2     # resume after a stop, in the latest run directory
+styre run design.md --from-phase 2 --run-id 20260920-2330   # ... in a specific one
+styre summarize                        # what happened in the last run
+styre summarize 20260920-233014        # ... or a named one, by id or by path
 ```
 
 Other flags on `run`: `--quiet` (no live echo), `--retries`, `--timeout`, `--gate-timeout`,
 `--allow-test-changes`, `--branch` (default `overnight/<design-stem>`), `--allow-dirty`,
-`--reset-branch`.
+`--reset-branch`, `--run-id`.
 
 `orchestrate.py` still works and translates the old form onto the subcommands, with a
 deprecation notice on stderr.
@@ -136,20 +153,94 @@ appended to the exclude file located via `git rev-parse --git-path info/exclude`
 
 ```
 .styre/
-  phaseN.prompt.md     builder prompt
-  phaseN.fixR.md       fix-round prompt
-  phaseN.state.json    status, reason, unmet_criteria, fix_rounds_self
-  notes-next.md        one phase's hand-off to the next; overwritten, not appended
-  logs/phaseN.log      readable transcript + gate output, appended
-  logs/phaseN.events.jsonl  raw pi events, each stamped with its arrival time
-  report.md            per-phase outcome summary
-docs/decisions.md      append-only decision log, COMMITTED with the code
+  latest.txt           the id of the most recently opened run (a file, not a symlink: Windows)
+  phaseN.state.json    the agent's drop box; moved into the run directory once pi stops
+  notes-next.md        the agent's drop box; moved into the run directory once pi stops
+  runs/<YYYYmmdd-HHMMSS>/
+    phaseN.prompt.md     builder prompt
+    phaseN.fixR.md       fix-round prompt
+    phaseN.state.json    status, reason, unmet_criteria, fix_rounds_self
+    phaseN.notes-next.md that phase's hand-off, read by phase N+1 and nobody else
+    logs/phaseN.log      readable transcript + gate output
+    logs/phaseN.events.jsonl  raw pi events, each stamped with its arrival time
+    sessions/phaseN/<iso>_<uuid>.jsonl  pi's own session per step, named "<run> phase N <step>"
+    timeline.jsonl       what the orchestrator did and how long it took
+    report.md            per-phase outcome summary, written by the run
+    summary.md           the `summarize` report, written by `styre summarize`
+docs/decisions.md      append-only decision log, COMMITTED with the code, deliberately per
+                       project rather than per run
 AGENTS.md              standing instructions for the agent, COMMITTED, styre block only
 ```
 
-Note that logs append across runs and prompts are overwritten, so two runs cannot currently
-be compared. Per-run directories under `.styre/runs/<timestamp>/` are the first item
-in `TODO.md`, and the rest of that list depends on them.
+One directory per run, so two runs can be compared instead of overwriting each other.
+`styre run` opens a new one and writes its id to `latest.txt`; `--from-phase N` continues in
+the latest run (that is how the previous phase's notes are found) and `--run-id` picks
+another. Notes are per phase, not one overwritten file: resuming at phase N must read what
+phase N-1 handed over even if a later phase already ran and wrote its own.
+
+## The timeline
+
+`<run>/timeline.jsonl` is the orchestrator's own record of a run, one JSON object per line,
+appended and flushed as things happen so a killed run still leaves everything up to the
+kill. Every line carries `ts` and `event`.
+
+| Event | Fields |
+| --- | --- |
+| `run_start` | `run`, `styre`, `design`, `design_sha256`, `templates`, `pi_version`, `branch`, `phases`, `from_phase`, `retries` |
+| `pi_start` / `pi_end` | `phase`, `step` (`builder` or `fix N`), and on end `seconds`, `rc` |
+| `gate_start` / `gate_end` | `command`, and on end `seconds`, `rc` |
+| `guard_result` | `ok`, `problem` |
+| `commit` | `phase`, `sha`, `subject` |
+| `phase_end` | `phase`, `status` (`committed`/`stopped`), `reason`, `rounds`, `fix_rounds_self`, `unmet_criteria` |
+| `run_end` | `exit_code`, `committed`, `stopped` |
+
+Everything in it is measured here — durations, return codes, the sha — never taken from the
+agent's account of its own work. `Timeline.span()` writes the `_start`/`_end` pair and the
+duration, and writes the end event even when the block raises. A `Timeline` with no path
+discards its events, so `verify()` can take one without caring whether a run exists.
+
+Two things a reader has to know. A resumed run **appends** to the timeline of the run it
+continues, so there is one `run_start` per invocation, not per directory; group by them.
+And `guard_result` is absent, not false, when `--allow-test-changes` turned the guard off.
+
+`templates` is a short hash of `prompts.py` plus the `AGENTS.md` block: a run whose prompt
+builder changed underneath it is then recognisable afterwards instead of a mystery. That is
+the failure the 2026-09-20 gateway run hit — see "Usage" on verifying an install by
+behaviour.
+
+## Summarize
+
+`styre summarize [run]` reports what happened, from the files on disk. With no argument it
+takes the run `.styre/latest.txt` names; otherwise a run id or a directory path. It prints
+the report and writes it to `<run>/summary.md`.
+
+**It calls no model, and must not start.** Counting tokens, measuring durations and deciding
+which gate failed are exactly the things an agent's own account gets wrong, and not trusting
+that account is the point of the orchestrator. `TODO.md` T8 is where a pi-written narrative
+would go: a separate `narrative.md`, labelled as model-written, on top of these numbers.
+
+Three sources, in that order of authority: `timeline.jsonl` for durations, return codes and
+shas; `logs/phaseN.events.jsonl` for tool calls and tokens; the `phaseN.state.json` files
+for the agent's own account, used only where the timeline is silent — a phase killed before
+its `phase_end` still left a state file. Any of them may be missing, and each reader
+degrades to a partial answer, because a run killed at 3am is the one most worth reading.
+
+Four sections: the header (design, branch, pi and styre versions, wall time, exit code, the
+design and template hashes), the per-phase table, "where to look", and tools.
+
+Things worth keeping right:
+
+- **`-` is not `0.0`.** A dash means nothing was measured; a zero means it was, and was
+  quick. Same rule as `n/a` for thinking tokens — absent is not zero.
+- **Input is the last value, output is a sum.** pi reports input cumulatively per step. The
+  cumulative-usage trap one level down (`message_update.usage`) is avoided by reading only
+  `message_end`.
+- **"Where to look" includes a phase that committed cleanly** when it self-corrected and the
+  orchestrator saw no fix rounds. That gap is the clearest sign of a criterion the design
+  states less plainly than its gate enforces, and it is invisible in the table.
+- A gate or guard failure recurring every fix round is listed once with a count.
+- Tool durations come from our own arrival stamps, paired by `toolCallId`; pi stamps neither
+  end of a tool call. A call that never ended still counts as a call.
 
 ## Why it is built this way
 
@@ -199,8 +290,12 @@ are not complexity to be trimmed. Everything else is.
   phase-specific material belongs in the prompt.
 - The CLI is subcommands (`styre check`, `styre run`), installed as a console script. A new
   verb is a new subcommand, not a flag on `run`.
-- The pi invocation is fixed: `pi -p --mode json`, the constant `PI`. No `--pi-cmd`, no
-  `--model`, no auto-appended `--no-approve`. Local models only; pi's own settings pick which.
+- One directory per run; the agent's own two output paths stay short and stable, and the
+  orchestrator archives them. A committed `AGENTS.md` cannot name a run id, and a long path
+  is one more thing for the model to get wrong.
+- The pi invocation is fixed: `pi -p --mode json`, the constant `PI`, plus `--session-dir`
+  and `--name` computed per step. No `--pi-cmd`, no `--model`, no auto-appended
+  `--no-approve`. Local models only; pi's own settings pick which.
 - Never commit on a red gate.
 - Cross-platform: pathlib, no POSIX-only shell syntax inside the package. (The end-to-end
   tests' own fixture gate uses `test -f`, so they skip on Windows.)
@@ -221,13 +316,20 @@ Invocation:
 - `--no-approve` exists (`-na`), stopping project-local extensions and settings from being
   trusted automatically. styre does not pass it: the target repo is the user's own.
 - `--session-dir <dir>` works, including in print mode. Precedence is `--session-dir`, then
-  `PI_CODING_AGENT_SESSION_DIR`, then `sessionDir` in settings.
+  `PI_CODING_AGENT_SESSION_DIR`, then `sessionDir` in settings. styre passes it per phase,
+  so a run's transcripts sit in the run directory rather than the user's session store. pi
+  creates the directory if it is missing; styre creates it anyway.
 - Print-mode runs **are** saved as sessions. Files are named `<iso>_<uuid>.jsonl`.
-- `--name` / `-n` sets the session display name.
+- `--name` / `-n` sets the session display name. Re-verified on 2026-09-20: it lands in the
+  session file's `session_info.name`, the second line, not in the streamed events.
+- The saved session is **not** a substitute for `logs/phaseN.events.jsonl`. It holds the
+  conversation, not the event stream, and carries none of our arrival timestamps. It is
+  there so pi's own tooling can open a phase.
 - The default provider is `google`, but the configured default here resolves to a **local
-  mlxserve model** (`pi --list-models` offers only mlxserve, 65K context, and no provider keys are
-  set). Usage and cost therefore come back as zeros — this project runs local models only, so
-  any cost reporting must treat zeros as normal rather than as a parse failure.
+  mlxserve model** — no provider keys are set and `pi --list-models` offers only mlxserve. Usage and
+  cost report as zero, because nothing is being billed. Token counts are real — see "Token
+  accounting" below; they were zero until 2026-09-20 for a config reason, not a local-model
+  reason. See "Where the model runs": local does not mean same machine.
 
 Event stream, in order: `session` (header), `agent_start`, `turn_start`, then per message
 `message_start` / `message_update`* / `message_end`, with
@@ -266,8 +368,9 @@ Shapes worth knowing:
   `output - (reasoning or 0)`. Providers that expose no reasoning breakdown leave it
   undefined — that is different from `0`, and the two must not be conflated. `cacheWrite1h`
   is similarly Anthropic-only.
-- **Usage and cost are all zero against a local provider** (the sample above ran on a local
-  mlx model). Any cost reporting has to tolerate zeros rather than treat them as an error.
+- **Cost is zero against the local provider, but token counts are real** — as long as the
+  provider is configured for it. See "Token accounting" below; the captured fixtures predate
+  the fix and still show zeros, so do not take them as evidence of what the stream contains.
 
 ## Prompt size
 
@@ -306,6 +409,74 @@ last `## Phase` heading is folded into that phase.
 - Run the suite: `uv run --with pytest python -m pytest -q`. The end-to-end tests drive the
   real phase loop against `tests/fake_pi.py`, so a behavior change shows up there. Add a case
   for anything new rather than only testing it by hand.
+
+## Token accounting
+
+Until 2026-09-20 every `usage` block in the event stream read
+`{input: 0, output: 0, totalTokens: 0}`, and this file recorded that as a fact about local
+providers. It was not. The mlxserve provider block in `~/.config/pi/agent/models.json` declared:
+
+```json
+"compat": { "supportsUsageInStreaming": false }
+```
+
+so pi streamed without asking for usage and filled in zeros. The server was asked directly and
+reports usage perfectly well, in streaming mode too, given
+`stream_options: {"include_usage": true}` — along with `time_to_first_token`,
+`generation_tokens_per_second` and prefill timings. The flag is now `true`, and a `message_end`
+carries real numbers: `{input: 1507, output: 34, cacheRead: 6144, totalTokens: 7685}`.
+
+Note `totalTokens` includes `cacheRead`, and **prompt caching is live on this provider** — 6144
+of those 7685 tokens were cache hits on a trivial prompt. That matters for the prompt-scoping
+work: a stable prefix is cheap on the second and later phases.
+
+To total a phase, read `<run>/logs/phaseN.events.jsonl` and, over the `message_end` events,
+**sum `output` but take the last `input`** — `message_update.usage` is cumulative and must
+never be summed (the same trap, one level down). The first `message_end` of a run carries
+`None` rather than `0`; that is absent, not zero.
+
+⚠️ `pi_simple.jsonl`, `pi_toolcall.jsonl` and `pi_session.jsonl` were captured before the
+fix, so their usage blocks are zeros. A parser written against them must not conclude that
+counts are always zero. `pi_usage.jsonl` (captured 2026-09-20, after the fix) is the one
+with real numbers: `input 1560, output 23, cacheRead 6144, reasoning 0` and a `model` on
+`message_end`. Note this provider *does* report `reasoning`, as a real 0 rather than an
+absent field — the "n/a is not 0" rule is for providers that omit it, not this one.
+
+## Where the model runs
+
+Verified 2026-09-20. "Local" here means on the LAN, not on the machine running styre:
+
+| | |
+| --- | --- |
+| styre and pi | MacBook Air M2 (`Mac14,2`), 192.168.2.22, on Wi-Fi |
+| the model | a second Mac, M4 Pro / 48 GB, at `http://192.168.2.31:8000/v1` |
+
+The endpoint is the `mlxserve` provider's `baseUrl` in `~/.config/pi/agent/models.json`; it is
+OpenAI-compatible and wants an API key, which pi holds in `auth.json`. That directory, not
+`~/.pi/agent`, is pi's config: `~/.zshrc` exports
+`PI_CODING_AGENT_DIR=$HOME/.config/pi/agent`. `~/.pi/agent` is the pre-16-September default
+and is now dead — its `models.json` still says `supportsUsageInStreaming: false`, lists
+different model ids and does not even parse (a trailing comma). Do not read it for anything;
+verify which tree is live by `echo $PI_CODING_AGENT_DIR`. Because the export lives in
+`.zshrc`, it reaches interactive shells only: a run started from cron or launchd would fall
+back to the dead tree. The default resolves to
+`arsis-dev/ukisai-Swift-Qwen3.8-27b-MTPLX` (262K context) — confirmed by reading `model` out of
+the event stream, not by assuming. Nothing pins it: `settings.json` has no `model` key, so
+installing another mlxserve model can silently change what an overnight run gets.
+
+What follows from the split:
+
+- **Inference heat is not on the styre machine.** The Air runs a Python process and pi; the
+  fanless chassis is irrelevant to throughput. Thermal headroom is the M4 Pro's problem.
+- **Two machines have to stay awake**, and the second one has its own `pmset` settings.
+- **The LAN link is a failure mode of its own.** It is Wi-Fi, with LAN round-trips measured at
+  30-110 ms and high variance. A dropped link or a sleeping model host leaves pi waiting on a
+  socket with nothing to print, which is precisely the case the per-run watchdog covers: no
+  output for `--timeout` seconds kills the process group and the phase fails rather than
+  hanging until morning.
+- Measured throughput on the 2026-09-20 gateway run: **~60 KB of event-log JSON per minute**,
+  flat across three phases. A phase's wall time tracks that rate, so a sustained sag means the
+  model host is throttling or the link is degrading.
 
 ## Safety
 

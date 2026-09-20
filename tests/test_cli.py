@@ -1,5 +1,8 @@
+from pathlib import Path
+
 import pytest
 
+from styre import __version__
 from styre.cli import build_parser, main
 
 
@@ -53,8 +56,24 @@ def test_no_command_prints_help(capsys):
     assert "usage: styre" in capsys.readouterr().out
 
 
+def test_the_version_is_reported_and_has_one_source(capsys):
+    with pytest.raises(SystemExit) as e:
+        build_parser().parse_args(["--version"])
+    assert e.value.code == 0
+    assert capsys.readouterr().out.strip() == f"styre {__version__}"
+    # pyproject reads the version from the package, so there is nothing here to disagree.
+    pyproject = (Path(__file__).resolve().parent.parent / "pyproject.toml").read_text(encoding="utf-8")
+    assert 'dynamic = ["version"]' in pyproject
+    assert 'version = {attr = "styre.__version__"}' in pyproject
+
+
+def test_summarize_takes_an_optional_run():
+    assert build_parser().parse_args(["summarize"]).run is None
+    assert build_parser().parse_args(["summarize", "20260920-1200"]).run == "20260920-1200"
+
+
 def test_defaults_match_the_documented_ones():
     args = build_parser().parse_args(["run", "d.md"])
-    assert (args.retries, args.timeout, args.gate_timeout) == (2, 5400, 900)
+    assert (args.retries, args.timeout, args.gate_timeout) == (2, 7200, 900)
     assert args.from_phase == 1 and args.branch is None
     assert not (args.quiet or args.allow_dirty or args.allow_test_changes or args.reset_branch)
