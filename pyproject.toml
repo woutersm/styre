@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "styre"
+version = "0.1.0"
+description = "An overnight phase orchestrator for the pi coding agent"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = []          # stdlib only, deliberately
+
+[project.scripts]
+styre = "styre.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.setuptools]
+packages = ["styre"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 110
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
