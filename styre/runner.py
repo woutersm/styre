@@ -7,6 +7,7 @@ is committed on a red gate.
 from __future__ import annotations
 
 import hashlib
+import json
 import shutil
 import time
 from dataclasses import dataclass, field
@@ -15,8 +16,8 @@ from pathlib import Path
 
 from styre import __version__
 from styre.agents import write_agents_file
-from styre.config import AGENTS, DECISIONS, PI, WORK
-from styre.design import phase_context
+from styre.config import AGENTS, DECISIONS, MAX_TOUCHES, PI, WORK
+from styre.design import parse_phases, phase_context
 from styre.gitops import (
     add_excludes,
     branch_exists,
@@ -28,15 +29,18 @@ from styre.gitops import (
     in_repo,
     is_dirty,
     phase_commits,
+    stage,
     stage_all,
 )
 from styre.guard import verify
 from styre.process import run as run_command
 from styre.process import stream_pi
 from styre.prompts import build_prompt, fix_prompt, template_hash
+from styre.review import describe_review
 from styre.rundir import clear_inbox, collect, latest_run, new_run, open_run
 from styre.state import read_state, state_problem
 from styre.timeline import Timeline
+from styre.touch import touch1_review, touch2_execute
 
 
 class PreflightError(Exception):
@@ -213,6 +217,65 @@ def pi_version():
     return out.strip().splitlines()[0] if rc == 0 and out.strip() else None
 
 
+def _load_touches(run):
+    return json.loads(run.touches.read_text(encoding="utf-8")) if run.touches.exists() else {}
+
+
+def _save_touches(run, state):
+    run.touches.write_text(json.dumps(state), encoding="utf-8")
+
+
+def _escalate(design_path, text, phases, n, phase, opts, run, tl, result):
+    """After run_phase() stops, try Claude touches, bounded by MAX_TOUCHES, before giving up
+    on the phase. See CLAUDE.md, "The supervising layer", for the reasoning behind the shape:
+
+    Touch 1 reviews the stop and, if it patches the design, the local model gets one more
+    full fresh attempt at the phase. Touch 2 only runs if that fresh attempt stops on the
+    same phase again (or if Touch 1 judged it a capability gap rather than a design bug, in
+    which case there is no point retrying the local model first) — it writes the phase
+    itself, verified by the same gate pi's work is.
+    """
+    state = _load_touches(run)
+    touches = state.get(str(n), 0)
+    if touches >= MAX_TOUCHES:
+        print(f"    {touches} Claude touches already spent on phase {n} — "
+              "stopping for a human, not trying again automatically.", flush=True)
+        return result
+
+    if touches == 0:
+        print(f"    phase {n} stopped ({result.why}); Claude touch 1 of {MAX_TOUCHES} "
+              "(review)...", flush=True)
+        patched = touch1_review(design_path, n, phase, result.why, run, tl,
+                                timeout=opts.timeout or None)
+        state[str(n)] = 1
+        _save_touches(run, state)
+        if patched:
+            print("    design patched — retrying the phase with a fresh local attempt.",
+                  flush=True)
+            # Committed on its own, not swept into the phase's commit via stage_all(): a
+            # design fix and a phase's implementation are different kinds of change, and
+            # tonight's own precedent (a human committing "make doc more clear" separately)
+            # is the shape this follows.
+            stage(design_path)
+            if has_staged_changes():
+                commit(f"Touch 1: design fix for phase {n}")
+                tl.event("commit", phase=n, sha=head_sha(), subject="Touch 1 design fix",
+                         touch=True)
+            fresh_text = Path(design_path).read_text(encoding="utf-8")
+            fresh_phases = parse_phases(fresh_text)
+            return run_phase(phase_context(fresh_text, fresh_phases, n), n, fresh_phases[n - 1],
+                             opts, run, tl)
+        print("    no design fix made — executing the phase directly (Touch 2).", flush=True)
+    else:
+        print(f"    phase {n} stopped again after a design fix; Claude touch 2 of "
+              f"{MAX_TOUCHES} (direct execution)...", flush=True)
+
+    state[str(n)] = MAX_TOUCHES
+    _save_touches(run, state)
+    why, minutes = touch2_execute(phase_context(text, phases, n), n, phase, opts, run, tl)
+    return PhaseResult(n=n, title=phase.title, why=why, rounds=0, minutes=minutes, log=run.log(n))
+
+
 def orchestrate(design_path, phases, opts, run):
     """Run every phase from --from-phase on. Returns the process exit code."""
     text = Path(design_path).read_text(encoding="utf-8")
@@ -224,13 +287,29 @@ def orchestrate(design_path, phases, opts, run):
              templates=template_hash(), pi_version=pi_version(), branch=current_branch(),
              phases=len(phases), from_phase=opts.from_phase, retries=opts.retries)
 
+    # The initial review: what already exists in the repo that each phase's prose names,
+    # computed once before any phase runs and written into the run directory rather than
+    # requiring a separate `styre review` call to remember to make. Deterministic, no model
+    # call, cheap — unlike a Claude touch, this runs every time, on by default.
+    run.review.write_text(f"# Review before phase {opts.from_phase}\n\n"
+                          f"{describe_review(phases)}\n", encoding="utf-8")
+    print(f"[styre] review written to {run.review}", flush=True)
+
     committed = 0
     for n, phase in enumerate(phases, 1):
         if n < opts.from_phase:
             continue
         result = run_phase(phase_context(text, phases, n), n, phase, opts, run, tl)
+        if result.why is not None and opts.claude_touch:
+            result = _escalate(design_path, text, phases, n, phase, opts, run, tl, result)
         committed += result.why is None
         lines += result.summary()
+        if result.why is None and n < len(phases):
+            # Re-checked against the repo state phase n just produced: a phase can make a
+            # later one's own references newly resolvable, or newly conflicting, in ways
+            # the initial review — computed before anything was built — could not see.
+            with open(run.review, "a", encoding="utf-8") as f:
+                f.write(f"\n# Review after phase {n}\n\n{describe_review(phases[n:])}\n")
         if result.why is not None:
             stopped = (f"Stopped at phase {n}: {result.why}. "
                        f"Work is left uncommitted. Log: {result.log}")

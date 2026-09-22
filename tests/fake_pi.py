@@ -100,6 +100,19 @@ def act(action, n):
         write_decisions(n)
         write_state(n, "BLOCKED", "the design does not say which format to use")
         return
+    if action == "blocked_then_ok":
+        # Simulates a Claude Touch 1 fixing the design: BLOCKED the first time this phase is
+        # attempted, "ok" on any retry — a marker file (untouched by clear_inbox) is what
+        # tells the two attempts apart, since both write the same prompt file name.
+        marker = Path(f".styre/_touched_phase{n}")
+        if marker.exists():
+            act("ok", n)
+            return
+        marker.parent.mkdir(exist_ok=True)
+        marker.write_text("1", encoding="utf-8")
+        write_decisions(n)
+        write_state(n, "BLOCKED", "the design does not say which format to use")
+        return
     if action == "lying":
         write_decisions(n)
         Path("done.txt").write_text("done\n", encoding="utf-8")

@@ -6,12 +6,14 @@ from pathlib import Path
 from styre import __version__
 from styre.config import DEFAULT_GATE_TIMEOUT, DEFAULT_RETRIES, DEFAULT_TIMEOUT, RunOptions
 from styre.design import describe, parse_phases, validate
+from styre.review import describe_review
 from styre.rundir import resolve
 from styre.runner import PreflightError, orchestrate, preflight
 from styre.summarize import summarize
 
 EXAMPLES = """examples:
   styre check design.md                 validate the design and print what it will run
+  styre review design.md                find existing repo code each phase's prose touches
   styre run design.md                   run every phase, one commit each
   styre run design.md --from-phase 2    resume after a stop
   styre summarize                       what happened in the last run
@@ -42,6 +44,12 @@ def cmd_check(args):
     return 1 if problems else 0
 
 
+def cmd_review(args):
+    phases = load_design(args.design)
+    print(describe_review(phases))
+    return 0
+
+
 def cmd_run(args):
     phases = load_design(args.design)
     problems = validate(phases)
@@ -55,6 +63,7 @@ def cmd_run(args):
         from_phase=args.from_phase, run_id=args.run_id, branch=args.branch,
         allow_dirty=args.allow_dirty,
         reset_branch=args.reset_branch,
+        claude_touch=args.claude_touch,
     )
     try:
         run = preflight(args.design, opts)
@@ -86,6 +95,11 @@ def build_parser():
     check.add_argument("design", help="the design document")
     check.set_defaults(func=cmd_check)
 
+    review = sub.add_parser(
+        "review", help="find existing repo code/tests each phase's prose already touches")
+    review.add_argument("design", help="the design document")
+    review.set_defaults(func=cmd_review)
+
     run = sub.add_parser("run", help="run the design, one commit per phase")
     run.add_argument("design", help="the design document")
     run.add_argument("--from-phase", type=int, default=1, metavar="N", help="resume at phase N")
@@ -106,6 +120,10 @@ def build_parser():
     run.add_argument("--allow-dirty", action="store_true", help="start with an unclean working tree")
     run.add_argument("--reset-branch", action="store_true",
                      help="discard an existing run branch and restart it at HEAD (destructive)")
+    run.add_argument("--claude-touch", action="store_true",
+                     help="on a stop, let Claude (via `claude -p`) review and, bounded, "
+                          "execute a stuck phase directly before giving up — real, automatic "
+                          "spend against the Claude CLI; off by default")
     run.set_defaults(func=cmd_run)
 
     summary = sub.add_parser("summarize", help="report what happened in a run")

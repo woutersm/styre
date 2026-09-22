@@ -54,13 +54,18 @@ def repo(tmp_path):
 
 @pytest.fixture
 def fake_pi(tmp_path):
-    """Put the fake agent on PATH as `pi`. Returns the PATH to use."""
+    """Put the fake pi and the fake claude on PATH. Returns the PATH to use.
+
+    Both live in the same bindir: --claude-touch tests need `claude` findable exactly the
+    way `pi` already is, and one PATH entry is simpler than two fixtures for it.
+    """
     bindir = tmp_path / "bin"  # outside the repo, so it does not dirty the tree
     bindir.mkdir()
-    pi = bindir / "pi"
-    pi.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{Path(__file__).parent / "fake_pi.py"}" "$@"\n',
-                  encoding="utf-8")
-    pi.chmod(0o755)
+    for name, script in (("pi", "fake_pi.py"), ("claude", "fake_claude.py")):
+        exe = bindir / name
+        exe.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{Path(__file__).parent / script}" "$@"\n',
+                       encoding="utf-8")
+        exe.chmod(0o755)
     return f"{bindir}{os.pathsep}{os.environ['PATH']}"
 
 
@@ -71,13 +76,15 @@ def styre(repo, fake_pi):
     `plan` maps a prompt file name (`phase1.prompt.md`, `phase1.fix1.md`, ...) to one of the
     fake agent's actions; `default` is used for the names it does not mention.
     """
-    def call(*args, plan=None, default="ok", path=None, timeout=120):
+    def call(*args, plan=None, default="ok", path=None, timeout=120, claude_mode=None):
         env = dict(os.environ)
         env["PATH"] = path if path is not None else fake_pi
         env["PYTHONPATH"] = str(ROOT)
         env["NO_COLOR"] = "1"
         env["FAKE_PI_PLAN"] = json.dumps(plan or {})
         env["FAKE_PI_DEFAULT"] = default
+        if claude_mode is not None:
+            env["FAKE_CLAUDE_MODE"] = claude_mode
         return subprocess.run([sys.executable, "-m", "styre", *args], cwd=repo, env=env,
                               capture_output=True, text=True, timeout=timeout)
     return call

@@ -22,6 +22,10 @@ def stage_all():
     git("add", "-A")
 
 
+def stage(path):
+    git("add", "--", str(path))
+
+
 def staged_diff():
     return git("diff", "--cached", "-U0")[1]
 
