@@ -39,6 +39,15 @@ def test_each_prompt_holds_the_preamble_and_only_its_own_phase(styre, repo, comm
     assert "Do the first thing." not in two             # earlier phases arrive as decisions
 
 
+def test_the_decisions_log_is_committed_but_reaches_no_later_prompt(styre, repo, commits):
+    styre("run", "design.md", "--quiet")
+    log = (repo / "docs" / "decisions.md").read_text(encoding="utf-8")
+    assert "## Phase 1: First phase" in log and "## Phase 2: Second phase" in log
+    two = (run_dir(repo) / "phase2.prompt.md").read_text(encoding="utf-8")
+    assert "Chose the obvious thing." not in two      # phase 1's decisions stay out
+    assert "Notes from phase 1." in two               # its notes are the channel that carries
+
+
 def test_the_run_branch_is_named_after_the_design(styre, repo, commits):
     styre("run", "design.md", "--quiet")
     head = (repo / ".git" / "HEAD").read_text(encoding="utf-8").strip()

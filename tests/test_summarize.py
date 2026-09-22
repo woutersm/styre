@@ -65,7 +65,7 @@ def test_the_captured_fixtures_have_zero_usage_and_that_is_read_as_zero(tmp_path
     # These were captured before the provider was fixed to report usage. A parser must read
     # them as zeros, not conclude that counts are always zero.
     phase = collect(make_run(tmp_path)).phases[0]
-    assert phase.usage.steps == 2 and phase.usage.output == 0
+    assert phase.usage.input == 0 and phase.usage.output == 0
 
 
 def test_real_token_counts_are_read_off_a_post_fix_capture(tmp_path):
@@ -73,8 +73,7 @@ def test_real_token_counts_are_read_off_a_post_fix_capture(tmp_path):
     # streaming, so unlike the older fixtures it carries real numbers.
     usage = collect(make_run(tmp_path, fixture="pi_usage.jsonl")).phases[0].usage
     assert (usage.input, usage.output, usage.cache_read) == (1560, 23, 6144)
-    assert usage.reasoning == 0 and usage.written == 23   # reported as zero, not absent
-    assert usage.cost == 0                                # local provider, nothing billed
+    assert usage.reasoning == 0                           # reported as zero, not absent
 
 
 def test_usage_takes_the_last_input_and_sums_the_output():
@@ -82,15 +81,15 @@ def test_usage_takes_the_last_input_and_sums_the_output():
     u.add({"input": None, "output": None})                       # the first message_end
     u.add({"input": 1507, "output": 34, "cacheRead": 6144, "totalTokens": 7685})
     u.add({"input": 2200, "output": 50, "cacheRead": 1000})
-    assert (u.input, u.output, u.cache_read, u.steps) == (2200, 84, 7144, 3)
+    assert (u.input, u.output, u.cache_read) == (2200, 84, 7144)
 
 
 def test_thinking_is_not_reported_as_zero_when_the_provider_omits_it():
     u = Usage()
     u.add({"input": 10, "output": 40})
-    assert u.reasoning is None and u.written is None      # absent, which is not zero
+    assert u.reasoning is None                            # absent, which is not zero
     u.add({"input": 20, "output": 60, "reasoning": 45})
-    assert u.reasoning == 45 and u.written == 55
+    assert u.reasoning == 45
 
 
 TIMELINE = [
@@ -126,7 +125,7 @@ def test_the_timeline_drives_the_phase_table(tmp_path):
     assert phase.failed_gates == [("builder", "pytest -q", 1)]
     assert phase.sha == "a" * 40
     text = render(summary)
-    assert "| 1 | Phase 1: One | committed | 15.0      | 0.8" in text
+    assert "| 1 | Phase 1: One | committed | aaaaaaa | 15.0      | 0.8" in text
     assert "0.85.1" in text and "overnight/d" in text and "templates def456" in text
 
 
@@ -157,10 +156,23 @@ def test_state_files_fill_in_for_a_phase_the_timeline_never_finished(tmp_path):
 def test_a_run_without_a_timeline_still_summarises_what_it_has(tmp_path):
     summary = collect(make_run(tmp_path))
     assert "Incomplete" in render(summary) and "timeline.jsonl" in render(summary)
-    assert summary.phases[0].usage.steps == 2       # the events file is still readable
+    assert summary.phases[0].usage.input == 0       # the events file is still readable
 
 
 def test_summarize_writes_summary_md_into_the_run(tmp_path):
     run = make_run(tmp_path, timeline=TIMELINE)
     text = summarize(run)
     assert (run.root / "summary.md").read_text(encoding="utf-8") == text
+
+
+def test_the_commit_sha_is_in_the_table(tmp_path):
+    """The rollback point is the most useful thing in a morning report; it used to be
+    collected off the timeline and then never rendered."""
+    text = render(collect(make_run(tmp_path, timeline=TIMELINE)))
+    assert "| Commit " in text and "aaaaaaa" in text
+
+
+def test_cache_hits_are_summed_and_shown(tmp_path):
+    summary = collect(make_run(tmp_path, fixture="pi_usage.jsonl"))
+    assert summary.phases[0].usage.cache_read == 6144
+    assert "Cached" in render(summary)

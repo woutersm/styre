@@ -34,9 +34,19 @@ IDENT_RE = re.compile(r"`([A-Za-z_][A-Za-z0-9_.]*(?:\(\))?)`")
 _BUILTINS = frozenset({
     "None", "True", "False", "self", "cls",
     "str", "int", "float", "bool", "list", "dict", "set", "tuple", "bytes", "object", "type",
+    "Exception", "ValueError", "TypeError", "KeyError", "OSError", "RuntimeError",
+    "Path", "datetime", "date", "time", "json", "Any", "Optional", "Literal",
+    "pytest", "hypothesis", "assert", "import", "return", "class", "def",
 })
 
 MAX_SHOWN = 8
+
+# A name this common is a local variable or a library, not a collision with this phase's
+# plan. Measured on a real 11-phase design: 47 of 108 reported identifiers were above this,
+# and they were what made the report 65 KB — bigger than the design it reviews — so nobody
+# read the `WidgetFactory (2)` that the whole thing exists to surface. The signal is a name
+# a handful of tests already pin, not one the repo says a hundred times.
+MAX_HITS = 5
 
 
 def _tokens(text):
@@ -83,7 +93,7 @@ def find_references(phases, repo_root="."):
         for tok in _tokens(phase.body):
             if tok not in cache:
                 cache[tok] = _grep(tok, repo_root)
-            if cache[tok]:
+            if cache[tok] and len(cache[tok]) <= MAX_HITS:
                 per_token[tok] = cache[tok]
         if per_token:
             result[phase.title] = per_token

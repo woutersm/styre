@@ -163,6 +163,49 @@ Five cuts, all landed, suite green:
 - `runner.py` threads one `Ctx` (design path, text, phases, opts, run dir, timeline)
   instead of six positional arguments per function.
 
+## Context discipline, 2026-09-22 (evening)
+
+Phase 3 landed first try after the prompt work; phase 4 then spent 8 steps and 18 minutes
+reading `.styre/` — the timeline, `touches.json`, `review.md` — and wrote nothing.
+
+- [x] ~~`AGENTS.md`: never read anything under `.styre/`.~~ The same fix as the design-doc
+      line. An agent explores every path you name to it.
+- [x] ~~Cap `review.py` at `MAX_HITS` hits per identifier, widen the exclusion list.~~ On
+      app: 65 KB → 26 KB, and `conn` (111 hits), `clock` (93) and `Path` (36) stopped
+      burying `WorkerConfig` (2). The report was bigger than the design it reviews.
+- [x] ~~`summarize`: render the commit sha and cache hits; drop `Usage.written`, `.cost`
+      and `.steps`.~~ The sha was collected off the timeline and never printed; cost is
+      structurally 0 on a local provider.
+- [ ] Delete `orchestrate.py`, the deprecated shim. Nothing references it but CLAUDE.md.
+- [ ] Report an empty model response (`totalTokens: 0`) instead of "no state file written".
+- [ ] `summarize`'s header takes versions from `starts[0]`; take them from the last
+      invocation instead.
+
+## Prompt scoping, 2026-09-22
+
+Driven by a real failure on `~/Dev/app`: phase 3 stopped four times with "no state file
+written". The actual event was the model returning **zero tokens** after ~4 minutes, at
+~21k tokens of context. See CLAUDE.md, "Prompt size".
+
+- [x] ~~Scope `docs/decisions.md` into the prompt.~~ Superseded the same day: **the log is
+      no longer in the prompt at all.** Scoping it (29.6 KB → 2.6 KB on app) made the
+      remaining 2.6 KB readable, and reading it settled the question — four of seven bullets
+      restated the tree, one was status the gate had proved, none was about the phase that
+      would read it. `scope_decisions()` was deleted with the block. The file is still
+      written and still committed; `AGENTS.md` now says who reads it.
+- [ ] Watch for the accepted risk: notes last one phase, so a Phase 1 decision that Phase 9
+      needs will not survive eight hops. The fix when it bites is to put it in the design,
+      written by a human — not to put the log back in the prompt.
+- [ ] `styre check` should flag a phase whose prose tells the agent to read a file. That one
+      line — "The design means `docs/agent-design.md`. Read it first" — turned a 2.3 KB
+      phase into a 44 KB context and is invisible until the model goes silent.
+- [ ] Report an empty model response honestly. A final `message_end` with
+      `totalTokens: 0` is in the events file; styre says "no state file written", which
+      cost four restarts to see through.
+- [ ] `summarize`'s header takes versions from `starts[0]`. On a run resumed 8 times over
+      two days it printed `pi 0.86.1, styre 0.2.0` while the run actually executed on
+      0.87.0 / 0.7.0. Take them from the last invocation.
+
 ## Live logging, 2026-09-22
 
 What a human sees while a phase runs. See CLAUDE.md, "Watching a run".

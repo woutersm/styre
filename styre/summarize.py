@@ -69,31 +69,25 @@ class Usage:
     step, and `message_update.usage` is cumulative within a step and must never be summed.
     `reasoning` is optional — a provider that reports no thinking breakdown leaves it
     undefined, which is not the same as zero, so None survives all the way to the printout.
+
+    `cache_read` is summed rather than taken last, because it is read as a ratio against
+    input: prompt caching is live on this provider, and on a measured phase 403k of the
+    453k tokens the model saw were cache hits on the stable prompt prefix. A collapse in
+    that ratio is the signal that a phase's prefix stopped being stable.
     """
 
-    steps: int = 0
     input: int = 0
     output: int = 0
     reasoning: int | None = None
     cache_read: int = 0
-    cost: float = 0.0
 
     def add(self, usage):
-        self.steps += 1
         if usage.get("input") is not None:
             self.input = usage["input"]          # last, not summed
         self.output += usage.get("output") or 0
-        self.cache_read += usage.get("cacheRead") or 0
+        self.cache_read += usage.get("cacheRead") or 0   # summed: a hit rate, not a total
         if usage.get("reasoning") is not None:
             self.reasoning = (self.reasoning or 0) + usage["reasoning"]
-        cost = usage.get("cost")
-        if isinstance(cost, dict):
-            self.cost += cost.get("total") or 0
-
-    @property
-    def written(self):
-        """Non-thinking output: what is left of output once reasoning is taken out."""
-        return None if self.reasoning is None else self.output - self.reasoning
 
 
 @dataclass
@@ -316,33 +310,38 @@ def header_lines(summary):
 def phase_table(summary):
     rows = []
     for p in summary.phases:
-        rows.append([p.n, p.name, p.status or "?", minutes(p.agent_seconds, p.pi_steps),
+        rows.append([p.n, p.name, p.status or "?", (p.sha or "-")[:7],
+                     minutes(p.agent_seconds, p.pi_steps),
                      minutes(p.gate_seconds, p.gate_runs),
                      "-" if p.rounds is None else p.rounds,
                      "-" if p.self_rounds is None else p.self_rounds,
                      count(p.usage.input), count(p.usage.output),
-                     count(p.usage.reasoning)])
+                     count(p.usage.reasoning), count(p.usage.cache_read)])
     total = Usage()
     for p in summary.phases:
         total.output += p.usage.output
         total.input += p.usage.input
+        total.cache_read += p.usage.cache_read
         if p.usage.reasoning is not None:
             total.reasoning = (total.reasoning or 0) + p.usage.reasoning
-    rows.append(["", "total", "",
+    rows.append(["", "total", "", "",
                  minutes(sum(p.agent_seconds for p in summary.phases),
                          any(p.pi_steps for p in summary.phases)),
                  minutes(sum(p.gate_seconds for p in summary.phases),
                          any(p.gate_runs for p in summary.phases)),
                  sum(p.rounds or 0 for p in summary.phases),
                  sum(p.self_rounds or 0 for p in summary.phases),
-                 count(total.input), count(total.output), count(total.reasoning)])
+                 count(total.input), count(total.output), count(total.reasoning),
+                 count(total.cache_read)])
     return ["## Phases", "",
-            table(["#", "Phase", "Status", "Agent min", "Gate min", "Fix", "Self",
-                   "Input", "Output", "Thinking"], rows),
+            table(["#", "Phase", "Status", "Commit", "Agent min", "Gate min", "Fix", "Self",
+                   "Input", "Output", "Thinking", "Cached"], rows),
             "",
             "Input is the last value pi reported, not a sum: it is cumulative per step. "
             "Thinking is the part of output the provider attributed to reasoning; `n/a` "
-            "means it reported no breakdown, which is not the same as none."]
+            "means it reported no breakdown, which is not the same as none. Cached is the "
+            "sum of prompt-cache hits: large is good, and it collapsing means the prompt "
+            "prefix stopped being stable."]
 
 
 def where_to_look(summary):

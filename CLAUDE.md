@@ -20,9 +20,9 @@ committed on a red gate.
 | `styre/cli.py` | Argument parsing, the `check`, `run` and `summarize` subcommands. The `styre` console script points here. |
 | `styre/config.py` | Constants (`PI`, `CLAUDE`, `WORK`, `DECISIONS`, `AGENTS`, `EXCLUDES`) and the `RunOptions` bundle. |
 | `styre/design.py` | Parsing a design into `Phase` objects; `preamble()` and `phase_context()`; `validate()`; the `check` rendering. |
-| `styre/review.py` | `find_references()` / `describe_review()`: the second half of `check`, and what `run` calls automatically before phase 1 and after every commit. For every backtick-quoted identifier a phase names, greps the target repo's test-shaped files for existing references — the mechanical half of catching a phase that collides with a frozen test fixture, before a run starts rather than after a timeout. |
+| `styre/review.py` | `find_references()` / `describe_review()`: the second half of `check`, and what `run` calls automatically before phase 1 and after every commit. For every backtick-quoted identifier a phase names, greps the target repo's test-shaped files for existing references — the mechanical half of catching a phase that collides with a frozen test fixture, before a run starts rather than after a timeout. A name with more than `MAX_HITS` hits is dropped as a local variable or a library, not a collision. |
 | `styre/touch.py` | Claude as the escape hatch — see "The supervising layer". `run_claude()`, `touch_prompt()`, `touch()`: one turn at a stuck phase. Invoked only by `runner.py`'s `_escalate()`, only when `--claude-touch` is passed. |
-| `styre/prompts.py` | `build_prompt()`, `fix_prompt()`, and `scope_decisions()` — which part of the decisions log belongs to this design. |
+| `styre/prompts.py` | `build_prompt()` and `fix_prompt()`. |
 | `styre/agents.py` | `AGENTS_BODY`, the block written into the target repo's `AGENTS.md`. |
 | `styre/process.py` | `run()` for gates, `stream_pi()` for the agent, `render_event()` / `elapsed()`, `_watch_idle()`, `kill_tree()`. |
 | `styre/gitops.py` | Every git call, including `stage()` / `unstage_all()` (one path, and an emptied index, for the touch's separate design-fix commit) alongside `stage_all()`. |
@@ -76,12 +76,17 @@ is a hard error.
    the standing rules, the "what gets checked" explanation and the three-file contract live
    there rather than in each prompt. A pre-existing `AGENTS.md` keeps its own text; only the
    `<!-- styre:begin -->` … `<!-- styre:end -->` block is replaced.
+
+   It also tells the agent what **not** to read: nothing under `.styre/`. Naming a directory
+   to an agent is an invitation to explore it, and on 2026-09-22 a phase spent its first
+   eight steps and 18 minutes reading the orchestrator's own `timeline.jsonl`, `touches.json`
+   and `review.md` instead of writing code. Same failure as the design document that told
+   every phase to "read `docs/agent-design.md` first" — see "Prompt size".
 1. Write a prompt containing the design excerpt for this phase (`phase_context()`: the
    preamble, an index of the phase titles with this one marked, and this phase's section in
-   full — not the other phases' bodies), this design's own sections of `docs/decisions.md`
-   (`scope_decisions()`, see "Prompt size"), the previous phase's `notes-next.md`, and this
-   phase's criteria and gate. It points at AGENTS.md rather
-   than restating the rules.
+   full — not the other phases' bodies), the previous phase's `notes-next.md`, and this
+   phase's criteria and gate. It points at AGENTS.md rather than restating the rules.
+   `docs/decisions.md` is **not** in it — see "Prompt size".
 2. Start a fresh pi process: `pi -p --mode json --session-dir <run>/sessions/phaseN --name
    "<run-id> phase N <step>" @<prompt-file> "Follow the instructions in the attached file."`
    — the constant `PI` plus the two per-step session flags, under `--timeout` (default 7200 s
@@ -225,8 +230,8 @@ free win it looks like.
     review.md            the reference cross-check: before phase 1, then after every commit
     summary.md           the run's report, written when the run ends and by `styre summarize`
 docs/decisions.md      append-only decision log, COMMITTED with the code, deliberately per
-                       project rather than per run; only this design's sections are sent
-                       to the agent (scope_decisions)
+                       project rather than per run. WRITTEN by the agent, never read back
+                       to one: it is for a human, later
 AGENTS.md              standing instructions for the agent, COMMITTED, styre block only
 ```
 
@@ -284,7 +289,10 @@ its `phase_end` still left a state file. Any of them may be missing, and each re
 degrades to a partial answer, because a run killed at 3am is the one most worth reading.
 
 Three sections: the header (design, branch, pi and styre versions, wall time, exit code,
-the design and template hashes), the per-phase table, and "where to look".
+the design and template hashes), the per-phase table, and "where to look". The table carries
+each phase's **commit sha** — the rollback point, and the thing most worth having in the
+morning — and its **cache hits**, which is how a prompt prefix that stopped being stable
+becomes visible (measured: 403k of 453k tokens on a healthy phase were cache reads).
 
 `run` prints it and writes `summary.md` as it ends, so the morning report and the evening
 one are the same artifact in the same format. There is no second per-run report to drift
@@ -356,10 +364,12 @@ are not complexity to be trimmed. Everything else is.
 - Fresh pi process per phase. State lives in files and git, not in context.
 - Handoff state is split by lifetime: decisions are permanent and committed, notes last one
   phase, status is machine-readable. Nothing inventories the repo — the agent reads the tree.
-- The decisions log is stored whole and **transmitted scoped**: `docs/decisions.md` stays
-  per project and append-only on disk, but a phase prompt carries only the sections whose
-  heading matches a phase title in the design being run (2026-09-22). Storage and
-  transmission are separate questions; the first bullet is about storage and is unchanged.
+- The decisions log is **written but not transmitted** (2026-09-22). `docs/decisions.md`
+  stays per project, append-only and committed; no phase prompt carries it. It was the one
+  artifact styre forwarded to the next agent *as fact* without the gate ever seeing it,
+  which contradicts the second bullet above. `.styre/notes-next.md` is the phase-to-phase
+  channel. Storage and transmission are separate questions: this bullet is about
+  transmission, the one above it about storage, and only the first has changed.
 - The prompt's fixed cost is amortised across phases, so it is worth bytes: the honesty rules
   around `unmet_criteria` earn their space. Trim wording, never a rule.
 - Standing rules belong in `AGENTS.md` (pi auto-loads it, fix rounds included); only
@@ -460,18 +470,33 @@ after the standing rules moved to `AGENTS.md`, of which ~3.1 KB is the design it
 later phase it grows by ~1.25 KB of accumulated decisions, plus the previous phase's notes
 (~1.2 KB, which does not compound).
 
-**The decisions log is scoped to this design.** `docs/decisions.md` is per project, so a
-repo that has already run one design accumulates that design's sections too, and all of it
-used to ship in every prompt. Measured on a real repo (`app`, 2026-09-22): the log was
-29.6 KB, of which 2.6 KB belonged to the design being run. The other 27 KB was a finished
-15-phase plan's history. `scope_decisions()` keeps only the sections whose `## Phase N:
-Title` heading matches a phase title in this design — the same heading `build_prompt()`
-tells the agent to write, so both sides name the same string. `run` prints how much it
-dropped, because a section missing from every prompt is otherwise only noticed at 3am.
+**The decisions log is not in the prompt at all.** `docs/decisions.md` is still written by
+every phase and still committed — it is a good human artifact — but no prompt carries it.
 
-The risk that buys: a decision from an *earlier, different* design that a later phase
-genuinely needs no longer reaches the agent. It is in the committed file, for a human, and
-the phase should name it in its own prose if the agent needs it.
+It went in stages on 2026-09-22, and the stages are worth keeping because the second only
+became visible once the first was done. First it was *scoped*: the log is per project, so a
+repo that has already run one design accumulates that design's sections too, and on `app`
+that was 29.6 KB shipped into every prompt, of which 2.6 KB belonged to the design actually
+running. Then, reading the 2.6 KB that survived: four of its seven bullets restated what
+the tree already showed (dependency versions in `pyproject.toml`, three type fixes in the
+source, two test files described), one was status the gate had already proved ("245 passing
+under three randomised orders"), and none of the seven was about the phase that would read
+it. The scoping function was deleted with the block; a scoper with no caller is dead code.
+
+Two arguments finished it:
+
+- It is **ungated agent self-report, forwarded to the next agent as fact.** Everything else
+  the agent says is checked — by the gate, by the staged diff, by the state-file rules. This
+  was not, and it was the only thing passed forward. See "Decisions that are settled".
+- `.styre/notes-next.md` already does the job, better: addressed to one phase, written
+  forward ("hypothesis tests here use `@settings(deadline=None)`, follow that"), 900 bytes
+  on the same real phase against 2,564, and consumed rather than compounding.
+
+The risk taken: notes last exactly one phase, so the log was the only channel spanning a
+whole run, and a Phase 1 decision that Phase 9 needs will not survive eight hops. The
+answer when that bites is to put it in the **design**, written by a human, rather than hope
+a local model rediscovers and forwards it. `AGENTS.md` now tells the agent who the audience
+is, so it stops writing run summaries into a file nothing reads back.
 
 A related trap lives in the **design document's preamble**, which ships to every phase: a
 line telling the agent to read a reference document. On `app` the preamble said *"The

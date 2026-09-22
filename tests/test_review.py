@@ -74,6 +74,19 @@ def test_builtins_are_excluded_even_when_present_in_tests(repo):
     assert refs == {}
 
 
+def test_a_name_the_repo_says_everywhere_is_not_a_collision(repo):
+    """The report exists to surface a name a few tests pin, not one used a hundred times.
+    Unfiltered, common names made a real report 65 KB — bigger than the design it reviews."""
+    add_test_file(repo, "test_noise.py", "\n".join(f"conn{i} = WidgetFactory()" for i in range(3))
+                  + "\nconn = 1\nconn = 2\nconn = 3\nconn = 4\nconn = 5\nconn = 6\n")
+    text = ("## Phase 1: X\nRename `WidgetFactory`, keep `conn`.\n\n"
+            "### Exit criteria\n- a\n\n### Gate\n```\ntrue\n```\n")
+    refs = find_references(parse_phases(text), repo_root=repo)
+    hits = refs["Phase 1: X"]
+    assert "WidgetFactory" in hits          # 3 hits: the signal
+    assert "conn" not in hits               # 9 hits: a local variable, not a plan collision
+
+
 def test_describe_review_renders_hits_and_the_no_hits_case(repo):
     add_test_file(repo, "test_widget.py", "from app import WidgetFactory\n")
     phases = parse_phases(DESIGN)

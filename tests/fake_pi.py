@@ -86,10 +86,16 @@ def write_state(n, status="DONE", reason="", unmet=(), rounds=0):
     Path(".styre/notes-next.md").write_text(f"Notes from phase {n}.\n", encoding="utf-8")
 
 
+TITLE = ""  # the heading this phase's prompt told us to write, set in main()
+
+
 def write_decisions(n):
+    """Append a decisions section under the heading the prompt told us to write. No later
+    phase reads it back — it is committed for humans — but the heading is part of the
+    contract, so the double writes the one it was given."""
     Path("docs").mkdir(exist_ok=True)
     with open("docs/decisions.md", "a", encoding="utf-8") as f:
-        f.write(f"\n## Phase {n}: fake\n\nChose the obvious thing.\n")
+        f.write(f"\n## Phase {n}: {TITLE or 'fake'}\n\nChose the obvious thing.\n")
 
 
 def act(action, n):
@@ -148,6 +154,10 @@ def main():
         return
     prompt = next((a[1:] for a in sys.argv[1:] if a.startswith("@")), "")
     name = Path(prompt).name
+    global TITLE
+    body = Path(prompt).read_text(encoding="utf-8") if prompt and Path(prompt).exists() else ""
+    m = re.search(r'appending a "## Phase \d+: (.*?)" section', body)
+    TITLE = m.group(1) if m else ""
     plan = json.loads(os.environ.get("FAKE_PI_PLAN", "{}"))
     action = plan.get(name, os.environ.get("FAKE_PI_DEFAULT", "ok"))
     n = int(re.search(r"phase(\d+)", name).group(1)) if re.search(r"phase(\d+)", name) else 1

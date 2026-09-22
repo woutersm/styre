@@ -32,7 +32,7 @@ from styre.gitops import (
 from styre.guard import verify
 from styre.process import run as run_command
 from styre.process import stream_pi
-from styre.prompts import build_prompt, fix_prompt, scope_decisions, template_hash
+from styre.prompts import build_prompt, fix_prompt, template_hash
 from styre.review import describe_review
 from styre.rundir import RunDir, clear_inbox, collect, latest_run, new_run, open_run
 from styre.state import read_state, state_problem
@@ -160,15 +160,14 @@ def run_phase(ctx, n):
     print(f"[{datetime.now():%H:%M}] {phase.title}", flush=True)
     log, events = run.log(n), run.events(n)
 
-    # Decisions accumulate across the whole run; notes are written for the next phase only
-    # and are consumed here, so they never pile up in later prompts. They are read from this
-    # run's directory, so a new run starts with none and a resume gets exactly the notes the
-    # phase before it wrote.
+    # Notes are written for the next phase only and are consumed here, so they never pile
+    # up in later prompts. They are read from this run's directory, so a new run starts with
+    # none and a resume gets exactly the notes the phase before it wrote. The decisions log
+    # is written by the agent but never read back to one — see build_prompt.
     previous = run.notes(n - 1)
     notes = previous.read_text(encoding="utf-8").strip() if previous.exists() else ""
     prompt = run.prompt(n)
-    decisions = scope_decisions(DECISIONS.read_text(encoding="utf-8"), ctx.phases)
-    prompt.write_text(build_prompt(ctx.context(n), n, phase, decisions, notes), encoding="utf-8")
+    prompt.write_text(build_prompt(ctx.context(n), n, phase, notes), encoding="utf-8")
 
     rounds, why, state = 0, None, None
     while True:
@@ -268,15 +267,6 @@ def orchestrate(design_path, opts, run):
     run.review.write_text(f"# Review before phase {opts.from_phase}\n\n"
                           f"{describe_review(ctx.phases)}\n", encoding="utf-8")
     print(f"[styre] review written to {run.review}", flush=True)
-
-    # What the decisions log costs this run, and what is being left out of it. A section
-    # silently missing from every prompt is the kind of thing only noticed at 3am.
-    whole = DECISIONS.read_text(encoding="utf-8")
-    mine = scope_decisions(whole, ctx.phases)
-    if len(whole.strip()) > len(mine):
-        print(f"[styre] decisions: sending {len(mine) / 1024:.1f} KB of "
-              f"{len(whole) / 1024:.1f} KB — only the sections whose heading matches a "
-              f"phase title in this design", flush=True)
 
     committed, stopped = 0, None
     for n in range(opts.from_phase, len(ctx.phases) + 1):

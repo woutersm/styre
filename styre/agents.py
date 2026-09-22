@@ -48,19 +48,29 @@ spend a fix round on it.
   branch. The orchestrator owns the git history.
 - Read what earlier phases wrote in the working tree rather than a description of it. The
   notes you are handed deliberately do not inventory the repository.
-- Under `.styre/` write only the files your prompt names, and never another phase's.
+- **Never read anything under `.styre/`.** It is the orchestrator's working directory, not
+  yours: run logs, timelines, prompts and other phases' files. Nothing in it helps you build
+  this phase, and reading it spends the context you need for the work. Write exactly the two
+  files your prompt names there, and nothing else — no listing it, no looking for another
+  phase's state file to copy. The format you need is below, in full.
 
 ## The three files you write when you finish
 
 | File | Lifetime | Who reads it |
 | --- | --- | --- |
-| `{DECISIONS}` | permanent, append-only, committed with the code | every later phase, and humans |
+| `{DECISIONS}` | permanent, append-only, committed with the code | humans, later |
 | `.styre/notes-next.md` | one phase; overwrite it, never append | the next phase only |
 | `.styre/phaseN.state.json` | one phase | the orchestrator |
 
 `{DECISIONS}` is for choices a reader could not infer from the code: ambiguities you
 resolved, options you rejected and why, constraints you discovered. Not a list of the files
 you created — the repository already shows that.
+
+**No later phase reads it.** It is committed for a person going through this months from
+now, so write the two or three things that would save them an hour, and nothing else. A
+summary of what you built, a count of passing tests, or a report that the gate went green
+is wasted here: the gate is what proves that, and it has already run. If the *next* phase
+needs to know something, that belongs in `.styre/notes-next.md`, which it does read.
 
 `.styre/phaseN.state.json` is the machine-readable result:
 
