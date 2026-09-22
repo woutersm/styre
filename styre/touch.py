@@ -1,23 +1,21 @@
-"""Claude as reviewer and escape hatch — see CLAUDE.md, "The supervising layer".
+"""Claude as the escape hatch — see CLAUDE.md, "The supervising layer".
 
 Invoked only at a phase boundary `run_phase()` already stops at on its own: `BLOCKED`, a
-timeout, or the gate still red after `--retries`. This module holds the two Claude
-invocations only; the bounding (at most `MAX_TOUCHES` per phase) and the retry/escalate/stop
-control flow stay in `runner.py`, where the rest of the phase loop already lives.
+timeout, or the gate still red after `--retries`. One turn per phase, ever; the bounding
+lives in `runner._escalate()`, beside the rest of the phase loop it extends.
 
 Nothing here trusts Claude's own account of what it did, the same rule `verify()` already
-enforces on pi. Touch 1 is judged by whether the design file's *content* changed, not by
-what Claude's answer claims. Touch 2's diff is judged by the same `verify()` pi's diff is —
+enforces on pi. Whether the design was patched is judged by the file's *content* changing,
+not by what the answer claims, and the code is judged by the same `verify()` pi's diff is —
 the gate does not care who wrote it.
 """
 from __future__ import annotations
 
 import json
-import time
 from pathlib import Path
 
 from styre.config import CLAUDE
-from styre.gitops import commit, has_staged_changes, head_sha, stage_all
+from styre.gitops import commit, has_staged_changes, head_sha, stage, stage_all, unstage_all
 from styre.guard import verify
 from styre.process import run as run_command
 from styre.review import describe_review
@@ -27,7 +25,7 @@ def run_claude(prompt, timeout=None, log=None):
     """One `claude -p` call. Returns a dict with at least `result`, `is_error`, `cost`.
 
     A missing `claude` binary, a non-zero exit, or unparseable output all come back as
-    `is_error: True` rather than raising — a Touch that cannot even start is a stop for the
+    `is_error: True` rather than raising — a touch that cannot even start is a stop for the
     caller to act on, not a crash.
     """
     rc, out = run_command(CLAUDE + [prompt], timeout=timeout, log=log)
@@ -41,80 +39,75 @@ def run_claude(prompt, timeout=None, log=None):
             "cost": data.get("total_cost_usd"), "session_id": data.get("session_id")}
 
 
-def review_prompt(design_path, n, phase, why, prompt_path, log_path):
-    """The Touch 1 prompt: everything needed to judge one stop, nothing it has to guess at."""
-    review = describe_review([phase])
+def touch_prompt(ctx, n, why):
+    """Everything needed to take over one stuck phase, and nothing it has to guess at."""
     return (
-        f"Phase {n} of the design at `{design_path}` just stopped: {why}\n\n"
-        f"Read the phase's own prompt ({prompt_path}) and its transcript ({log_path}) to see "
-        f"what the local model actually tried. Here is what already exists in this repo that "
-        f"this phase's own prose names:\n\n{review}\n\n"
-        "Judge: is this a bug in the design (an instruction that contradicts something "
-        "already in the repo, a real ambiguity, a missing pointer) or a raw capability gap "
-        "(the local model cannot get this right even with a clear design)?\n\n"
-        f"If it is a design bug: fix `{design_path}` directly, the same way you would edit "
-        "any file, so the phase is achievable as written. Say what you changed and why, in "
-        "one or two sentences.\n\n"
-        "If it is a capability gap, not a design bug: do not edit the design, and do not "
-        "change any other file. Say so plainly — a later step handles that case, not you."
+        f"Phase {n} of the design at `{ctx.design_path}` stopped: {why}\n\n"
+        f"A local model has already had this phase and its fix rounds, and could not get the "
+        f"gate green. Read the phase's own prompt ({ctx.run.prompt(n)}) and its transcript "
+        f"({ctx.run.log(n)}) to see what it actually tried.\n\n"
+        f"Here is what already exists in this repository that this phase's own prose names:\n\n"
+        f"{describe_review([ctx.phase(n)])}\n\n"
+        f"<design>\n{ctx.context(n)}\n</design>\n\n"
+        "Do two things, in this order.\n\n"
+        f"1. If the phase stopped because the design itself is wrong — an instruction that "
+        f"contradicts something already in the repository, a real ambiguity, a missing "
+        f"pointer — fix `{ctx.design_path}` so the phase is achievable as written. Leave the "
+        f"edit in the working tree; it is committed separately, by the orchestrator, not by "
+        f"you. If the design is sound and the local model simply could not do the work, "
+        f"change nothing there.\n"
+        "2. Implement the phase yourself, and run the gate until it passes.\n\n"
+        "Then stop. The orchestrator runs the gate again and commits; you never run git."
     )
 
 
-def touch1_review(design_path, n, phase, why, run, tl, timeout=None):
-    """Claude reads the stop and judges: design bug, or capability gap?
+def touch(ctx, n, why_stopped):
+    """Claude's one turn at a stuck phase: patch the design if it is wrong, write the phase,
+    and be held to the same gate. Returns the reason it stopped, or None if it committed."""
+    phase = ctx.phase(n)
+    design = Path(ctx.design_path)
+    before = design.read_text(encoding="utf-8")
+    log = ctx.run.log(n)
 
-    Returns True if the design file's content changed (resume the phase with a fresh local
-    attempt) or False otherwise (escalate to Touch 2).
-    """
-    design_file = Path(design_path)
-    before = design_file.read_text(encoding="utf-8")
-    prompt = review_prompt(design_path, n, phase, why, run.prompt(n), run.log(n))
-    log = run.root / "logs" / f"phase{n}.touch1.log"
-    with tl.span("touch1", phase=n) as end:
-        result = run_claude(prompt, timeout=timeout, log=log)
+    with ctx.tl.span("touch", phase=n) as end:
+        result = run_claude(touch_prompt(ctx, n, why_stopped), timeout=ctx.opts.timeout or None,
+                            log=log)
         end["is_error"] = result["is_error"]
         end["cost"] = result["cost"]
-    patched = design_file.read_text(encoding="utf-8") != before
-    tl.event("touch1_result", phase=n, patched=patched, is_error=result["is_error"],
-             cost=result["cost"], session_id=result["session_id"])
-    return patched
-
-
-def touch2_execute(context, n, phase, opts, run, tl):
-    """Claude writes the phase itself; styre verifies and commits it, exactly as it would
-    pi's diff. Returns a (why, minutes) pair: `why` is None only on a clean commit."""
-    prompt = (
-        f"Implement Phase {n} of the design directly. It has already stopped twice with a "
-        f"local model attempting it, so you are writing the code yourself this time, not "
-        f"reviewing.\n\n{context}\n\n"
-        f"Run the gate yourself as you go until it passes, then stop — the orchestrator "
-        f"verifies and commits, not you."
-    )
-    log = run.log(n)
-    start = time.time()
-    with tl.span("touch2", phase=n) as end:
-        result = run_claude(prompt, timeout=opts.timeout or None, log=log)
-        end["is_error"] = result["is_error"]
-        end["cost"] = result["cost"]
-
-    why = None
+    patched = design.read_text(encoding="utf-8") != before
+    ctx.tl.event("touch_result", phase=n, patched=patched, is_error=result["is_error"],
+                 cost=result["cost"], session_id=result["session_id"])
     if result["is_error"]:
-        why = f"Touch 2 (direct execution) failed to run: {result['result'][:300]}"
-    else:
-        failure = verify(phase, log, gate_timeout=opts.gate_timeout,
-                         allow_test_changes=opts.allow_test_changes, timeline=tl,
-                         phase_n=n, step="touch2")
-        if failure:
-            why = f"Touch 2 wrote code but the gate is still red: {failure[0]}"
+        return f"the Claude touch failed to run: {result['result'][:300]}"
 
-    if why is None:
-        stage_all()
-        if not has_staged_changes():
-            why = "Touch 2's gate passed but changed nothing (no staged diff)"
-        else:
-            commit(f"{phase.title}\n\nEscalated: the local model could not pass the gate "
-                  f"after its own retries and a Claude design review; Claude wrote this "
-                  f"phase directly, and it passed the same gate every phase is held to.")
-            tl.event("commit", phase=n, sha=head_sha(), subject=phase.title, escalated=True)
+    if patched:
+        # A plan change and a code change are different kinds of change, so the design fix
+        # is its own commit rather than being swept into the phase's by stage_all() below.
+        # The index is emptied first: a phase that stopped on the test guard left everything
+        # staged, and that must not ride along with the design fix.
+        unstage_all()
+        stage(ctx.design_path)
+        if has_staged_changes():
+            commit(f"Touch: design fix for phase {n}")
+            sha = head_sha()
+            ctx.tl.event("commit", phase=n, sha=sha, subject="Touch design fix", touch=True)
+            print(f"    ✓ committed {sha[:7]}  Touch: design fix for phase {n}", flush=True)
+        ctx.reload()  # every later phase gets the fixed design, not the one that failed
+        phase = ctx.phase(n)
 
-    return why, round((time.time() - start) / 60, 1)
+    failure = verify(phase, log, gate_timeout=ctx.opts.gate_timeout,
+                     allow_test_changes=ctx.opts.allow_test_changes, timeline=ctx.tl,
+                     phase_n=n, step="touch")
+    if failure:
+        return f"Claude wrote the phase but the gate is still red: {failure[0]}"
+
+    stage_all()
+    if not has_staged_changes():
+        return "the Claude touch's gate passed but changed nothing (no staged diff)"
+    commit(f"{phase.title}\n\nEscalated: the local model could not pass the gate after its "
+           f"own retries; Claude wrote this phase directly, and it passed the same gate "
+           f"every phase is held to.")
+    sha = head_sha()
+    ctx.tl.event("commit", phase=n, sha=sha, subject=phase.title, escalated=True)
+    print(f"    ✓ committed {sha[:7]}  {phase.title} (escalated)", flush=True)
+    return None

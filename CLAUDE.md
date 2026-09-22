@@ -17,25 +17,25 @@ committed on a red gate.
 
 | File | What it is |
 | --- | --- |
-| `styre/cli.py` | Argument parsing, the `check`, `review`, `run` and `summarize` subcommands. The `styre` console script points here. |
-| `styre/config.py` | Constants (`PI`, `CLAUDE`, `WORK`, `DECISIONS`, `AGENTS`, `EXCLUDES`, `MAX_TOUCHES`) and the `RunOptions` bundle. |
+| `styre/cli.py` | Argument parsing, the `check`, `run` and `summarize` subcommands. The `styre` console script points here. |
+| `styre/config.py` | Constants (`PI`, `CLAUDE`, `WORK`, `DECISIONS`, `AGENTS`, `EXCLUDES`) and the `RunOptions` bundle. |
 | `styre/design.py` | Parsing a design into `Phase` objects; `preamble()` and `phase_context()`; `validate()`; the `check` rendering. |
-| `styre/review.py` | `find_references()` / `describe_review()`: the `review` subcommand, and what `run` calls automatically before phase 1 and after every commit. For every backtick-quoted identifier a phase names, greps the target repo's test-shaped files for existing references — the mechanical half of catching a phase that collides with a frozen test fixture, before a run starts rather than after a timeout. |
-| `styre/touch.py` | Claude as reviewer and escape hatch — see "The supervising layer". `run_claude()`, `touch1_review()`, `touch2_execute()`. Invoked only by `runner.py`'s `_escalate()`, only when `--claude-touch` is passed. |
-| `styre/prompts.py` | `build_prompt()` and `fix_prompt()`. |
+| `styre/review.py` | `find_references()` / `describe_review()`: the second half of `check`, and what `run` calls automatically before phase 1 and after every commit. For every backtick-quoted identifier a phase names, greps the target repo's test-shaped files for existing references — the mechanical half of catching a phase that collides with a frozen test fixture, before a run starts rather than after a timeout. |
+| `styre/touch.py` | Claude as the escape hatch — see "The supervising layer". `run_claude()`, `touch_prompt()`, `touch()`: one turn at a stuck phase. Invoked only by `runner.py`'s `_escalate()`, only when `--claude-touch` is passed. |
+| `styre/prompts.py` | `build_prompt()`, `fix_prompt()`, and `scope_decisions()` — which part of the decisions log belongs to this design. |
 | `styre/agents.py` | `AGENTS_BODY`, the block written into the target repo's `AGENTS.md`. |
-| `styre/process.py` | `run()` for gates, `stream_pi()` for the agent, `render_event()`, `kill_tree()`. |
-| `styre/gitops.py` | Every git call, including `stage()` (one path, for Touch 1's design-fix commit) alongside `stage_all()`. |
+| `styre/process.py` | `run()` for gates, `stream_pi()` for the agent, `render_event()` / `elapsed()`, `_watch_idle()`, `kill_tree()`. |
+| `styre/gitops.py` | Every git call, including `stage()` / `unstage_all()` (one path, and an emptied index, for the touch's separate design-fix commit) alongside `stage_all()`. |
 | `styre/guard.py` | `verify()` — the gate — and `test_tampering()`. `TEST_PATH` is also what `review.py` scopes its grep to. |
-| `styre/rundir.py` | The per-run directory `.styre/runs/<id>/`: its paths (including `touches` and `review`), `latest.txt`, and collecting the agent's two files into it. |
+| `styre/rundir.py` | The per-run directory `.styre/runs/<id>/`: its paths, `latest.txt`, and collecting the agent's two files into it. |
 | `styre/state.py` | Reading and judging `phaseN.state.json`. |
-| `styre/summarize.py` | Reading a finished run back off disk: the `summarize` subcommand. Calls no model. |
+| `styre/summarize.py` | Reading a finished run back off disk: the `summarize` subcommand, and the report every `run` prints as it ends. Calls no model. |
 | `styre/timeline.py` | `Timeline`: the append-and-flush writer behind `<run>/timeline.jsonl`. |
-| `styre/runner.py` | `preflight()`, the phase loop (`run_phase`, `orchestrate`), and `_escalate()` — the Claude-touch bounding and control flow. |
+| `styre/runner.py` | `preflight()`, the `Ctx` bundle the loop is threaded with, the phase loop (`run_phase`, `orchestrate`), and `_escalate()` — the Claude-touch bounding. |
 | `orchestrate.py` | Deprecated shim mapping the old single-command form onto the subcommands. |
 | `pyproject.toml` | Packaging and the `styre` entry point; ruff and pytest config. No runtime dependencies. |
 | `example-design.md` | Two-phase example design (a `wordfreq` CLI; uv, pytest, ruff) for testing. |
-| `TODO.md` | Tracked next steps: sessions per run, a pi preflight, and an optional pi-written narrative. |
+| `TODO.md` | Tracked next steps: a pi preflight and an optional pi-written narrative, plus the record of the 2026-09-22 simplification pass. |
 | `tests/` | pytest suite. `fake_pi.py` and `fake_claude.py` are test doubles installed on `PATH` as `pi` and `claude`, so the whole loop — including `--claude-touch` — runs without a model. |
 | `tests/fixtures/*.jsonl` | Real captured pi JSON output: a plain reply, a run with a bash tool call, a saved session file, and `pi_usage.jsonl` with real token counts. Write every parser against these, not against assumptions. |
 
@@ -78,18 +78,19 @@ is a hard error.
    `<!-- styre:begin -->` … `<!-- styre:end -->` block is replaced.
 1. Write a prompt containing the design excerpt for this phase (`phase_context()`: the
    preamble, an index of the phase titles with this one marked, and this phase's section in
-   full — not the other phases' bodies), the accumulated `docs/decisions.md`, the previous
-   phase's `notes-next.md`, and this phase's criteria and gate. It points at AGENTS.md rather
+   full — not the other phases' bodies), this design's own sections of `docs/decisions.md`
+   (`scope_decisions()`, see "Prompt size"), the previous phase's `notes-next.md`, and this
+   phase's criteria and gate. It points at AGENTS.md rather
    than restating the rules.
 2. Start a fresh pi process: `pi -p --mode json --session-dir <run>/sessions/phaseN --name
    "<run-id> phase N <step>" @<prompt-file> "Follow the instructions in the attached file."`
-   — the constant `PI` plus the two per-step session flags, under `--timeout` (default 7200 s),
-   enforced by a watchdog timer rather than a deadline checked per line: the run that stalls
-   a night is the one that stops printing. Output is read line by line. Each raw line is stamped with our own wall-clock time and appended to
+   — the constant `PI` plus the two per-step session flags, under `--timeout` (default 7200 s
+   of **silence**, not of total runtime — see "Watching a run"). Output is read line by line.
+   Each raw line is stamped with our own wall-clock time and appended to
    `<run>/logs/phaseN.events.jsonl`; the condensed non-thinking rendering goes to the terminal in
-   grey and to `<run>/logs/phaseN.log`. Keep that split: the log is for reading (a few KB), the
-   events file is for parsing (a few hundred KB per phase). Putting raw JSON in the log once
-   made it 180 KB with the gate output buried at line 404.
+   grey and, as it happens, to `<run>/logs/phaseN.log`. Keep that split: the log is for reading
+   (a few KB), the events file is for parsing (a few hundred KB per phase). Putting raw JSON in
+   the log once made it 180 KB with the gate output buried at line 404.
 3. The agent ends by writing three files: `docs/decisions.md` (append-only, committed),
    `.styre/notes-next.md` (overwritten, read only by the next phase), and
    `.styre/phaseN.state.json` (`status`, `reason`, `unmet_criteria`, `fix_rounds_self`).
@@ -98,7 +99,8 @@ is a hard error.
    into the run directory as `phaseN.state.json` and `phaseN.notes-next.md`. The agent's
    contract stays a stable path it can be told about in a committed `AGENTS.md`, which cannot
    name a run id.
-4. On `DONE`, the orchestrator runs each gate command itself (`--gate-timeout`, default 900 s).
+4. On `DONE`, the orchestrator runs each gate command itself (`--gate-timeout`, default 900 s),
+   printing each one before it starts and its verdict and duration after.
 5. It then runs a test-tampering guard over the staged diff: added skip/xfail markers, or a
    net removal of test functions, fail the phase. Disable with `--allow-test-changes`.
 6. Any failure is fed back to a fresh pi run as a fix prompt, up to `--retries` (default 2).
@@ -127,8 +129,8 @@ drift. Every run records it in `run_start` and every `summary.md` prints it, whi
 stale install is recognisable in the morning instead of being a mystery.
 
 ```
-styre check design.md                  # print phases, criteria, gates; validate; exit
-styre review design.md                 # find existing test-file references each phase's prose names
+styre check design.md                  # validate; print phases, criteria, gates; then
+                                       #   find existing test-file references its prose names
 styre run design.md                    # run every phase
 styre run design.md --from-phase 2     # resume after a stop, in the latest run directory
 styre run design.md --from-phase 2 --run-id 20260920-2330   # ... in a specific one
@@ -136,7 +138,8 @@ styre summarize                        # what happened in the last run
 styre summarize 20260920-233014        # ... or a named one, by id or by path
 ```
 
-Other flags on `run`: `--quiet` (no live echo), `--retries`, `--timeout`, `--gate-timeout`,
+Other flags on `run`: `--quiet` (no live echo to the terminal; the log is still written
+live), `--retries`, `--timeout`, `--gate-timeout`,
 `--allow-test-changes`, `--branch` (default `overnight/<design-stem>`), `--allow-dirty`,
 `--reset-branch`, `--run-id`, `--claude-touch` (see "The supervising layer" — off by
 default, real automatic spend against the `claude` CLI when it is on).
@@ -152,6 +155,56 @@ branch is checked out, never reset — resetting it would throw away phases an e
 committed. Re-running phase 1 over a branch that already holds phase commits warns;
 `--reset-branch` is the explicit, destructive opt-in. Orchestrator artifacts and caches are
 appended to the exclude file located via `git rev-parse --git-path info/exclude`.
+
+## Watching a run
+
+What reaches a human while a phase is running, and why each piece is there:
+
+```
+[19:59] Phase 1: First phase
+
+[+00:00] ⚙ bash ls -la ✓
+[+00:14] Added the tokeniser and its tests.
+
+    $ uv run pytest -q → FAILED (exit 1) (12.4s)
+    verification failed, gate failed: uv run pytest -q
+    fix round 1 of 2
+...
+    $ uv run pytest -q → ok (11.9s)
+    test guard → ok
+    ✓ committed c5f8a76  Phase 1: First phase
+```
+
+- **`[+MM:SS]`** is our own clock (`process.elapsed()`), reset per pi process, stamped onto
+  the lines that open: a tool call and the start of a reply. pi stamps almost nothing itself
+  (see the pi reference below), and "how long has this attempt been going" is the question a
+  watcher actually has. A fix round starting again at `+00:00` is the intended reading.
+- **The gate lines are printed around the command, not after it.** A gate is the longest
+  silence in a phase — a real test suite holds the terminal for minutes — so the command goes
+  out before it runs and the verdict lands on the same line when it returns. Before this, a
+  passing gate printed nothing at all and the terminal simply died for the length of the run.
+- **The commit line is the phase's actual result**, with the sha, so the rollback point is on
+  screen rather than only in the timeline.
+- These three are orchestrator output, not agent output, so `--quiet` does not suppress them;
+  `--quiet` silences the agent's own stream. The log file is written either way.
+
+`<run>/logs/phaseN.log` gets the same rendering **as it happens**, so `tail -f` on it follows
+a phase in flight. It used to be assembled in memory and written when pi exited, which meant
+the one human-readable file was the one you could not watch.
+
+### The timeout is idle, not a deadline
+
+`--timeout` is seconds of silence allowed from pi, not total runtime: `process._watch_idle()`
+watches the gap since the last line and kills the process group when it grows past the limit.
+A phase that is working and printing is never cut off; the failure being guarded against — a
+sleeping model host or a dropped Wi-Fi link leaving pi blocked on a socket, see "Where the
+model runs" — is exactly a process that stops printing.
+
+It follows that the limit must stay comfortably longer than the longest single tool call the
+agent might make: pi emits nothing between `tool_execution_start` and `tool_execution_end`,
+so a 30-minute test suite running inside a phase is indistinguishable from a dead link from
+here. That is why the default is hours and not minutes, and why tightening it is not the
+free win it looks like.
 
 ## State on disk (in the target repo)
 
@@ -169,12 +222,11 @@ appended to the exclude file located via `git rev-parse --git-path info/exclude`
     logs/phaseN.events.jsonl  raw pi events, each stamped with its arrival time
     sessions/phaseN/<iso>_<uuid>.jsonl  pi's own session per step, named "<run> phase N <step>"
     timeline.jsonl       what the orchestrator did and how long it took
-    touches.json         Claude touches spent per phase this run, {"<n>": count} — see touch.py
-    review.md            styre review's output: before phase 1, then appended after every commit
-    report.md            per-phase outcome summary, written by the run
-    summary.md           the `summarize` report, written by `styre summarize`
+    review.md            the reference cross-check: before phase 1, then after every commit
+    summary.md           the run's report, written when the run ends and by `styre summarize`
 docs/decisions.md      append-only decision log, COMMITTED with the code, deliberately per
-                       project rather than per run
+                       project rather than per run; only this design's sections are sent
+                       to the agent (scope_decisions)
 AGENTS.md              standing instructions for the agent, COMMITTED, styre block only
 ```
 
@@ -226,13 +278,17 @@ that account is the point of the orchestrator. `TODO.md` T8 is where a pi-writte
 would go: a separate `narrative.md`, labelled as model-written, on top of these numbers.
 
 Three sources, in that order of authority: `timeline.jsonl` for durations, return codes and
-shas; `logs/phaseN.events.jsonl` for tool calls and tokens; the `phaseN.state.json` files
+shas; `logs/phaseN.events.jsonl` for tokens and failed tool calls; the `phaseN.state.json` files
 for the agent's own account, used only where the timeline is silent — a phase killed before
 its `phase_end` still left a state file. Any of them may be missing, and each reader
 degrades to a partial answer, because a run killed at 3am is the one most worth reading.
 
-Four sections: the header (design, branch, pi and styre versions, wall time, exit code, the
-design and template hashes), the per-phase table, "where to look", and tools.
+Three sections: the header (design, branch, pi and styre versions, wall time, exit code,
+the design and template hashes), the per-phase table, and "where to look".
+
+`run` prints it and writes `summary.md` as it ends, so the morning report and the evening
+one are the same artifact in the same format. There is no second per-run report to drift
+out of step with it: `report.md`, which `run` used to accumulate as it went, is gone.
 
 Things worth keeping right:
 
@@ -245,8 +301,11 @@ Things worth keeping right:
   orchestrator saw no fix rounds. That gap is the clearest sign of a criterion the design
   states less plainly than its gate enforces, and it is invisible in the table.
 - A gate or guard failure recurring every fix round is listed once with a count.
-- Tool durations come from our own arrival stamps, paired by `toolCallId`; pi stamps neither
-  end of a tool call. A call that never ended still counts as a call.
+- Tool calls are read only for their **errors**, counted by tool name and surfaced in "where
+  to look". Nothing in the summary is timed off the event stream: durations come from the
+  timeline, which the orchestrator measures itself. A per-tool duration table paired by
+  `toolCallId` was built and then removed — it was a quarter of this module for something
+  nobody read at 8am.
 
 ## Why it is built this way
 
@@ -286,20 +345,31 @@ are not complexity to be trimmed. Everything else is.
 ## Decisions that are settled — do not reopen without asking
 
 - Serial: one agent works at a time, pi or Claude, never both at once — no parallel agents.
-  Claude may review a stuck phase and, bounded, execute it directly; see "The supervising
-  layer." (Decided 2026-09-21 — this replaces the earlier blanket "no reviewer agent.")
+  Claude gets one turn at a stuck phase and may patch the design and write it; see "The
+  supervising layer." (Decided 2026-09-21 — this replaces the earlier blanket "no reviewer
+  agent." Collapsed from a two-touch ladder to one touch on 2026-09-22.)
 - The agent's claim of success is never trusted; the gate is the arbiter.
 - One commit per phase, no tags — the commit is the rollback point.
-- Per-run timeout stays: a hung pi process is the failure that stalls a whole night.
+- Per-run timeout stays: a hung pi process is the failure that stalls a whole night. It is
+  measured as idle time, not total runtime (changed 2026-09-22; the code had always been a
+  deadline while this file described a watchdog, and the deadline killed productive phases).
 - Fresh pi process per phase. State lives in files and git, not in context.
 - Handoff state is split by lifetime: decisions are permanent and committed, notes last one
   phase, status is machine-readable. Nothing inventories the repo — the agent reads the tree.
+- The decisions log is stored whole and **transmitted scoped**: `docs/decisions.md` stays
+  per project and append-only on disk, but a phase prompt carries only the sections whose
+  heading matches a phase title in the design being run (2026-09-22). Storage and
+  transmission are separate questions; the first bullet is about storage and is unchanged.
 - The prompt's fixed cost is amortised across phases, so it is worth bytes: the honesty rules
   around `unmet_criteria` earn their space. Trim wording, never a rule.
 - Standing rules belong in `AGENTS.md` (pi auto-loads it, fix rounds included); only
   phase-specific material belongs in the prompt.
 - The CLI is subcommands (`styre check`, `styre run`), installed as a console script. A new
-  verb is a new subcommand, not a flag on `run`.
+  verb is a new subcommand, not a flag on `run` — but a verb that answers the same question
+  as an existing one is not a new verb: `styre review` was folded into `check` on
+  2026-09-22, since both only ever answered "is this design safe to start tonight".
+- One report per run, `summary.md`, computed from the timeline by `summarize`. `run` prints
+  it as it ends rather than accumulating a second one of its own.
 - One directory per run; the agent's own two output paths stay short and stable, and the
   orchestrator archives them. A committed `AGENTS.md` cannot name a run id, and a long path
   is one more thing for the model to get wrong.
@@ -390,8 +460,28 @@ after the standing rules moved to `AGENTS.md`, of which ~3.1 KB is the design it
 later phase it grows by ~1.25 KB of accumulated decisions, plus the previous phase's notes
 (~1.2 KB, which does not compound).
 
-Note this does not cut tokens per run: pi loads `AGENTS.md` into context anyway, so the
-~3.4 KB moved rather than vanished. What it buys is one source of truth, and fix-round runs
+**The decisions log is scoped to this design.** `docs/decisions.md` is per project, so a
+repo that has already run one design accumulates that design's sections too, and all of it
+used to ship in every prompt. Measured on a real repo (`app`, 2026-09-22): the log was
+29.6 KB, of which 2.6 KB belonged to the design being run. The other 27 KB was a finished
+15-phase plan's history. `scope_decisions()` keeps only the sections whose `## Phase N:
+Title` heading matches a phase title in this design — the same heading `build_prompt()`
+tells the agent to write, so both sides name the same string. `run` prints how much it
+dropped, because a section missing from every prompt is otherwise only noticed at 3am.
+
+The risk that buys: a decision from an *earlier, different* design that a later phase
+genuinely needs no longer reaches the agent. It is in the committed file, for a human, and
+the phase should name it in its own prose if the agent needs it.
+
+A related trap lives in the **design document's preamble**, which ships to every phase: a
+line telling the agent to read a reference document. On `app` the preamble said *"The
+design means `docs/agent-design.md`. Read it first"*, and phase 3's 2.3 KB body became a
+44 KB context — on a 27B local model the request came back with zero tokens. Measured after
+scoping the log and deleting that line: phase 3's whole context went 22,500 → 4,200 tokens.
+Write phases that are self-contained; a phase that points at a file has an unbounded prompt.
+
+Note the AGENTS.md move does not cut tokens per run: pi loads `AGENTS.md` into context
+anyway, so the ~3.4 KB moved rather than vanished. What it buys is one source of truth, and fix-round runs
 that now carry the full contract instead of a shortened reminder.
 
 Against the older single-`handoff.md` format that grew ~2.1 KB per phase, this is larger for
@@ -499,20 +589,20 @@ track spend.
 On a per-run timeout the whole process group is killed, not just pi, so tool children do not
 survive to hold ports and locks into the next phase.
 
-## The supervising layer — Claude as reviewer and escape hatch (built 2026-09-21)
+## The supervising layer — Claude as the escape hatch (built 2026-09-21, simplified 2026-09-22)
 
 Decided after a real run: `docs/agent-todo.md`'s Phase 2, in a real target repo, hit a
 genuine contradiction between the design and a pre-existing test fixture, and burned 3h40m
 before the timeout killed it rather than the agent ever reporting `BLOCKED`. A
 higher-capability model (Claude, via Claude Code), reading the logs afterward, diagnosed the
 actual conflict in minutes by cross-referencing the design against the repo, then patched the
-design by hand — the same thing `styre review` does the mechanical half of. This section
+design by hand — the same thing the reference cross-check does the mechanical half of.
+This section
 made that process deliberate rather than accidental; it is now built into `styre run` itself,
 not an external script — `styre` owns the whole loop, including the Claude calls.
 
-`styre/touch.py` holds the two Claude invocations (`touch1_review()`, `touch2_execute()`);
-the bounding and retry/escalate/stop control flow (`_escalate()`) lives in `runner.py`,
-beside the rest of the phase loop it extends. `--claude-touch` on `run` turns it on — off by
+`styre/touch.py` holds the one Claude invocation (`touch()`); the bounding (`_escalate()`)
+lives in `runner.py`, beside the rest of the phase loop it extends. `--claude-touch` on `run` turns it on — off by
 default, because it is real, automatic spend against the `claude` CLI, and every existing
 test (and every run before today) had no reason to expect that. Every phase stop still
 behaves exactly as before when the flag is not passed.
@@ -550,45 +640,54 @@ where styre already, unmodified, stops on its own: `BLOCKED`, a timeout, or the 
 red after `--retries` (default 2, unchanged — a backstop does not make the cheap local path
 cheaper to skip).
 
-**The ladder, bounded to at most two Claude touches per stuck phase, zero on a clean one:**
+**One touch per stuck phase, zero on a clean one.** Claude gets a single turn, and in it
+does both things the original two-tier ladder split across two calls:
 
-1. **Touch 1 — review.** Claude reads the stop reason, `styre review`'s output, and the
-   relevant files, and judges: a design bug, or a raw capability gap? A design bug gets
-   patched into the design document itself — the same shape as the corrections made by hand
-   to a real `agent-todo.md` on 2026-09-21: a test-fixture conflict, a `dataclasses.replace`
-   incompatibility, a hard-coded default a later phase would have silently broken. The phase
-   then resumes at `--from-phase N`, which always resets that phase's round counter — the
-   local model gets a full fresh attempt, not one more patched-up try.
-2. **Touch 2 — direct execution.** Reached only if the resumed attempt stops on the *same*
-   phase again, or immediately if Touch 1 judged it a capability gap rather than a design
-   bug (no point retrying the local model first in that case). Claude writes the phase
-   itself; `verify()` — the same one pi's diff is held to — decides whether it is green. If
-   it is, `commit()` runs, with an `Escalated:` line in the commit message body recording
-   that this phase's code was not written by the local model, so the history stays honest.
-3. If even Touch 2 cannot get the gate green, stop and tell a human. A gate that resists both
-   tiers is not a capability gap to push through further; it needs a person.
+1. If the design itself is wrong — an instruction that contradicts something already in the
+   repo, a real ambiguity, a missing pointer — patch the design document. This is the shape
+   of the corrections made by hand to a real `agent-todo.md` on 2026-09-21: a test-fixture
+   conflict, a `dataclasses.replace` incompatibility, a hard-coded default a later phase
+   would have silently broken. `ctx.reload()` re-reads the design, so every *later* phase
+   gets the fix too.
+2. Implement the phase. `verify()` — the same one pi's diff is held to — decides whether it
+   is green. If it is, `commit()` runs, with an `Escalated:` line in the commit message body
+   recording that this phase's code was not written by the local model, so the history stays
+   honest.
+3. If the touch cannot get the gate green, stop and tell a human. A gate that resists both
+   the local model's retries and Claude is not a capability gap to push through further; it
+   needs a person.
 
-**Bounding, precisely:** touches per phase are tracked in `<run>/touches.json`. Touch 1
-patching the design and the retry succeeding costs one touch. Touch 1 declining, or a
-patched retry stopping again, spends both in the same `_escalate()` call — Touch 2 always
-runs on that path — so a phase never gets a third automated attempt, resumed or not (see
-`test_a_third_stop_on_the_same_phase_does_not_touch_again` in `tests/test_touch.py`). Touch
-1's own design fix is committed on its own (`Touch 1: design fix for phase N`), separate
-from the phase's implementation commit — a plan change and a code change are different
-kinds of change, the same distinction a human made by hand tonight (`docs/decisions.md`'s
-own "make doc more clear" commits, kept apart from phase commits).
+**Why one call and not two.** The original ladder was Touch 1 (review, maybe patch the
+design, then hand the phase back to the local model for a fresh attempt) and Touch 2 (write
+it directly), with a `touches.json` counter bounding them. It was collapsed on 2026-09-22:
+the split was a cost optimisation — spend the cheap local model again before the expensive
+one — not a safety property, since `verify()` judges both paths identically. Against that it
+cost a counter file, a "design bug or capability gap?" classification the prompt had to ask
+for and the code had to branch on, a re-entrant call back into `run_phase()`, and a third
+possible outcome to reason about at 3am. The design fix and the implementation now happen in
+one process that has already read both.
+
+**Bounding, precisely:** a phase has had its touch if the timeline holds a `touch_start` for
+it. No bookkeeping file — the events are already written, and a resumed run appends to the
+same timeline it reads, so a resume cannot spend a second touch (see
+`test_a_second_stop_on_the_same_phase_does_not_touch_again` in `tests/test_touch.py`). The
+design fix is still committed on its own (`Touch: design fix for phase N`), against an
+emptied index so a phase that stopped on the test guard cannot ride along with it: a plan
+change and a code change are different kinds of change, the same distinction a human made by
+hand (`docs/decisions.md`'s own "make doc more clear" commits, kept apart from phase
+commits).
 
 **`run` also always runs the mechanical review, on by default, for both halves of "review
 and adjustments" — this part needs no flag and costs nothing, unlike a Touch.** Before phase
 1 (or `--from-phase N`), `describe_review(phases)` is written to `<run>/review.md`. After
 every phase that commits, it runs again for the *remaining* phases against the repo state
 that phase just produced, and is appended — a later phase's references can resolve, or
-newly conflict, in ways the initial pass could not have seen. Both are `styre review`'s own
-function, called directly; no separate command to remember to run.
+newly conflict, in ways the initial pass could not have seen. Both are `describe_review()`
+called directly; no separate command to remember to run.
 
-**Session shape: a fresh, narrowly scoped Claude process per Touch, not one long-running
+**Session shape: a fresh, narrowly scoped Claude process per touch, not one long-running
 session babysitting a whole night.** Each `claude -p` call is exactly that — a fresh
-process, no memory of an earlier Touch. This mirrors the exact reasoning that gave pi a
+process, no memory of an earlier one. This mirrors the exact reasoning that gave pi a
 fresh process per phase in the first place (see "Why it is built this way"): a single
 sprawling supervising conversation accumulating context across many interventions in one run
 would reintroduce, one layer up, the problem that design was built to avoid.

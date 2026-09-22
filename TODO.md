@@ -24,7 +24,7 @@ Logs used to append across runs and prompts were overwritten, so two runs could 
 compared. `styre/rundir.py` now owns the layout; `runner.py` asks it for every path.
 
 - [x] ~~Create `.styre/runs/<YYYYmmdd-HHMMSS>/` at run start; put prompts, logs,
-      events and `report.md` under it.~~ Done: `new_run()`, `RunDir`. `RunDir.timeline` is
+      events and the run's report under it.~~ Done: `new_run()`, `RunDir`. `RunDir.timeline` is
       the path T3 writes; T2 adds `sessions/` when it passes `--session-dir`.
 - [x] ~~Move `notes-next.md` and the `phaseN.state.json` files into the run directory.~~
       Done, but **the agent's own paths did not move**. It still writes the short
@@ -56,10 +56,16 @@ has to stamp lines as they arrive.
 - [x] ~~Write each line immediately to the events file with our timestamp.~~ Done, as
       `{"ts": "<iso>", "line": "..."}`. stderr is merged into stdout, so there is no `stream`
       field; add one only if the two need telling apart.
-- [ ] Verify `tail -f` against a long real run (checked only against a replayed fixture).
+- [x] ~~Verify `tail -f` against a long real run (checked only against a replayed fixture).~~
+      Done 2026-09-22, and the gap it was hiding is fixed: the readable log used to be
+      assembled in memory and written only when pi exited, so `tail -f` on `phaseN.log`
+      showed nothing until the phase was over. It is written through now, covered by
+      `test_the_readable_log_is_written_while_the_phase_is_still_running`.
 - [x] ~~Kill the whole process tree on timeout.~~ Done: `run()` starts each child in its own
       process group and `kill_tree()` signals the group. Keep this when switching to `Popen`
-      line reading.
+      line reading. The trigger became **idle time** rather than a deadline on 2026-09-22
+      (`_watch_idle`): the old one-shot `threading.Timer` killed a phase 2 h after it started
+      however busy it was, while this file had always claimed it watched for silence.
 - [x] ~~Keep returning the return code and an output tail.~~ Done: the readable transcript,
       not raw JSON. The log is for reading, `events.jsonl` is for parsing — do not merge them
       again.
@@ -121,7 +127,11 @@ is exactly the one worth summarising.
       the phase and step at the producer, in `verify()`, rather than inferred by the reader
       from the preceding `pi_end`.
 - [x] ~~Tool calls by tool name; tool errors; the longest tool calls, measured from our own
-      timestamps.~~ Done, paired by `toolCallId`. A call that never ended still counts.
+      timestamps.~~ Built, then cut back on 2026-09-22 to **tool errors only**, counted by
+      tool name and surfaced in "where to look". The per-tool duration table (pairing by
+      `toolCallId` across our own arrival stamps) was a quarter of `summarize.py` for
+      something nobody read in the morning. Nothing in the summary is timed off the event
+      stream now; durations come from the timeline, which we measure ourselves.
 - [x] ~~Tokens from the `message_end` usage, never summing `message_update`.~~ Done: only
       `message_end` is read, input is the last value, output a sum.
 - [x] ~~Per-step token split with `reasoning` optional and printed as "n/a", never `0`.~~
@@ -138,6 +148,38 @@ is exactly the one worth summarising.
 Keep this script deterministic. It must not call a model: counting tokens, measuring
 durations and deciding which gate failed are exactly the things an agent's own account gets
 wrong, and not trusting that account is the point of the orchestrator.
+
+## Simplification pass, 2026-09-22
+
+Five cuts, all landed, suite green:
+
+- `report.md` is gone. `run` ends by printing and writing `summarize`'s own report, so
+  there is one report format per run instead of two that could disagree. `PhaseResult`
+  went with it: `run_phase()` now returns just the reason it stopped, or None.
+- The tools table is out of `summarize.py` (437 → 387 lines); only tool *errors* survive.
+- `touches.json` is gone; a phase's touch is counted off `touch_start` in the timeline.
+- `styre review` is folded into `styre check` — one question, one command.
+- The Claude ladder is one touch, not two. See CLAUDE.md, "Why one call and not two".
+- `runner.py` threads one `Ctx` (design path, text, phases, opts, run dir, timeline)
+  instead of six positional arguments per function.
+
+## Live logging, 2026-09-22
+
+What a human sees while a phase runs. See CLAUDE.md, "Watching a run".
+
+- [x] ~~Narrate the orchestrator's own steps: each gate command before it runs, its verdict
+      and duration after, the test-guard verdict, and the commit with its sha.~~ A passing
+      gate used to print nothing, so the terminal died for the length of the test suite.
+- [x] ~~Stamp the agent's stream with time into the step (`[+MM:SS]`), on the lines that
+      open one: a tool call and the start of a reply.~~ `process.elapsed()`.
+- [x] ~~Write `logs/phaseN.log` through as it happens rather than at the end.~~ Closes T1's
+      last open item.
+- [x] ~~Make `--timeout` idle rather than a deadline.~~ `process._watch_idle()`.
+- [x] ~~Make `fake_pi.py` emit `message_update.toolcall_start` the way real pi does~~ — the
+      fixture had it and the double did not, so the stamp on tool calls was untested.
+- [ ] Parked: a thinking heartbeat, and live per-step token counts. Both were offered and
+      not taken; they add lines that say only "still alive". Revisit if a real run turns out
+      to have long silent stretches the elapsed stamp does not explain.
 
 ## T8. Optional pi-written run narrative
 
@@ -194,7 +236,7 @@ pytest, using a `fake_pi.py` test double installed as `pi` on PATH.
 
 - [ ] `styre run example-design.md` in a fresh git repo, with `fake_pi.py` as
       `pi`, ends with two commits. The run directory holds prompts, logs, sessions, events,
-      `timeline.jsonl` and `report.md`. Everything but the real-pi part is covered by
+      `timeline.jsonl` and `summary.md`. Everything but the real-pi part is covered by
       `tests/test_run_end_to_end.py`; running it against real pi is the open half.
 - [ ] While it runs, `tail -f <run>/logs/*.events.jsonl` shows lines as they arrive.
 - [x] ~~`styre summarize <run-dir>` prints the table and writes `summary.md`.~~ Covered in
@@ -203,8 +245,15 @@ pytest, using a `fake_pi.py` test double installed as `pi` on PATH.
 - [x] ~~Two consecutive runs leave two directories under `.styre/runs/`, neither overwriting
       the other.~~ Covered in `tests/test_run_end_to_end.py`.
 - [ ] The same flow works against real pi on `example-design.md`.
+- [ ] Watch one real phase end to end with the new narration and see whether the elapsed
+      stamps land where a tired reader wants them — the shapes are right against the
+      fixtures, but only a real hour-long phase says whether it reads well at 3am.
 
 ## Parked — ask before starting
 
-Reviewer agent, hidden held-out tests, run and time budgets, a placeholder scan, parallel
-phases, notifications when a run stops.
+Hidden held-out tests, run and time budgets, a placeholder scan, parallel phases,
+notifications when a run stops, a run-level circuit breaker on repeated Claude escalations.
+
+(The reviewer agent came off this list on 2026-09-21 and was built as the Claude touch; see
+CLAUDE.md, "The supervising layer". It was simplified from two touches to one on
+2026-09-22.)

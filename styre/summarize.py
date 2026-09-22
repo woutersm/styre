@@ -5,7 +5,7 @@ and deciding which gate failed are exactly the things an agent's own account get
 not trusting that account is the point of the orchestrator.
 
 Three sources, in order of authority: `timeline.jsonl` for what the orchestrator did and how
-long it took, `logs/phaseN.events.jsonl` for the agent's tool calls and token usage, and the
+long it took, `logs/phaseN.events.jsonl` for token usage and failed tool calls, and the
 `phaseN.state.json` files for what the agent said about itself. Any of them may be missing —
 a run killed at 3am is the one most worth summarising — so every reader degrades to a
 partial answer instead of failing.
@@ -18,8 +18,6 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from styre.state import read_state
-
-LONGEST_TOOLS = 5
 
 
 def read_jsonl(path):
@@ -38,10 +36,11 @@ def read_jsonl(path):
 
 
 def read_events(path):
-    """Yield (arrival time, pi event) from one phase's events file.
+    """Yield pi's events from one phase's events file.
 
-    Each line is `{"ts": ..., "line": raw}`: our own arrival timestamp around pi's event,
-    which carries none of its own except in the session header and message_end.
+    Each line is `{"ts": ..., "line": raw}`: our own arrival timestamp wrapped around pi's
+    event. The stamp is not read here — nothing in the summary is timed off the event
+    stream. Durations come from the timeline, which the orchestrator measures itself.
     """
     for wrapper in read_jsonl(path):
         raw = wrapper.get("line")
@@ -52,7 +51,7 @@ def read_events(path):
         except json.JSONDecodeError:
             continue  # not an event: text mode, or pi complaining
         if isinstance(event, dict):
-            yield parse_ts(wrapper.get("ts")), event
+            yield event
 
 
 def parse_ts(text):
@@ -98,13 +97,6 @@ class Usage:
 
 
 @dataclass
-class Tool:
-    calls: int = 0
-    errors: int = 0
-    seconds: float = 0.0
-
-
-@dataclass
 class Phase:
     """One phase, as the files describe it."""
 
@@ -124,8 +116,7 @@ class Phase:
     pi_failures: list[tuple] = field(default_factory=list)    # (step, rc)
     guard_problems: list[str] = field(default_factory=list)
     usage: Usage = field(default_factory=Usage)
-    tools: dict = field(default_factory=lambda: defaultdict(Tool))
-    longest: list[tuple] = field(default_factory=list)        # (seconds, tool, detail)
+    tool_errors: dict = field(default_factory=lambda: defaultdict(int))  # tool name -> count
 
     @property
     def name(self):
@@ -139,7 +130,7 @@ class Phase:
         return bool(self.failed_gates or self.pi_failures or self.guard_problems or self.unmet
                     or (self.status and self.status != "committed")
                     or (self.self_rounds and not self.rounds)
-                    or any(t.errors for t in self.tools.values()))
+                    or bool(self.tool_errors))
 
 
 @dataclass
@@ -207,35 +198,15 @@ def read_timeline(run, summary):
 
 
 def read_phase_events(run, phase):
-    """Fold one phase's pi events in: tool calls, tool errors, durations, token usage.
-
-    Tool durations come from our own arrival timestamps — pi stamps neither end of a tool
-    call — and calls are paired by toolCallId.
-    """
-    open_calls = {}
-    for ts, e in read_events(run.events(phase.n)):
+    """Fold one phase's pi events in: token usage, and tool calls that came back an error."""
+    for e in read_events(run.events(phase.n)):
         kind = e.get("type")
-        if kind == "tool_execution_start":
-            args = e.get("args")
-            detail = str(next(iter(args.values()), "")) if isinstance(args, dict) else ""
-            open_calls[e.get("toolCallId")] = (ts, e.get("toolName"), detail)
-        elif kind == "tool_execution_end":
-            started, name, detail = open_calls.pop(e.get("toolCallId"), (None, e.get("toolName"), ""))
-            tool = phase.tools[name or "?"]
-            tool.calls += 1
-            tool.errors += bool(e.get("isError"))
-            if started and ts:
-                seconds = (ts - started).total_seconds()
-                tool.seconds += seconds
-                phase.longest.append((seconds, name or "?", detail.replace("\n", " ")[:60]))
+        if kind == "tool_execution_end" and e.get("isError"):
+            phase.tool_errors[e.get("toolName") or "?"] += 1
         elif kind == "message_end":
             usage = (e.get("message") or {}).get("usage")
             if isinstance(usage, dict):
                 phase.usage.add(usage)
-    for _, tool_name, _ in open_calls.values():  # started, never finished: pi died mid-call
-        phase.tools[tool_name or "?"].calls += 1
-    phase.longest.sort(reverse=True)
-    del phase.longest[LONGEST_TOOLS:]
 
 
 def read_state_files(run, summary):
@@ -274,7 +245,7 @@ def collect(run):
         if run.events(phase.n).exists():
             read_phase_events(run, phase)
         else:
-            summary.missing.append(f"logs/phase{phase.n}.events.jsonl: no tools or tokens")
+            summary.missing.append(f"logs/phase{phase.n}.events.jsonl: no token counts")
     return summary
 
 
@@ -395,8 +366,7 @@ def where_to_look(summary):
             out.append(f"- the agent fixed {p.self_rounds} gate failure(s) by itself and the "
                        "orchestrator saw none: a criterion the design states less clearly "
                        "than the gate enforces.")
-        errors = [(name, t.errors) for name, t in sorted(p.tools.items()) if t.errors]
-        for name, n in errors:
+        for name, n in sorted(p.tool_errors.items()):
             out.append(f"- {n} failed {name} call(s)")
         out.append("")
     if len(out) == 2:
@@ -404,29 +374,9 @@ def where_to_look(summary):
     return out
 
 
-def tool_section(summary):
-    rows, longest = [], []
-    for p in summary.phases:
-        for name, t in sorted(p.tools.items()):
-            rows.append([p.n, name, t.calls, t.errors or "", f"{t.seconds:.1f}"])
-        longest += [(s, p.n, name, detail) for s, name, detail in p.longest]
-    if not rows:
-        return []
-    longest.sort(reverse=True)
-    out = ["## Tools", "", table(["Phase", "Tool", "Calls", "Errors", "Seconds"], rows), "",
-           "Durations are measured between our own arrival timestamps for the start and end "
-           "events, paired by toolCallId; pi stamps neither.", ""]
-    if longest[:LONGEST_TOOLS]:
-        out += ["Longest calls:"]
-        out += [f"- {s:.1f}s  phase {n}  {name}  {detail}" for s, n, name, detail
-                in longest[:LONGEST_TOOLS]]
-    return out
-
-
 def render(summary):
     """The whole summary as text. Markdown, but meant to read fine in a terminal."""
-    blocks = [header_lines(summary), phase_table(summary), where_to_look(summary),
-              tool_section(summary)]
+    blocks = [header_lines(summary), phase_table(summary), where_to_look(summary)]
     return "\n\n".join("\n".join(b).strip("\n") for b in blocks if b).rstrip() + "\n"
 
 

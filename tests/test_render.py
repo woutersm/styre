@@ -1,10 +1,11 @@
 """The event renderer, against real captured pi output rather than assumptions."""
 import json
+import time
 from pathlib import Path
 
 import pytest
 
-from styre.process import render_event
+from styre.process import elapsed, render_event
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
@@ -46,3 +47,16 @@ def test_unknown_events_render_nothing():
 
 def test_tool_error_is_marked():
     assert render_event({"type": "tool_execution_end", "isError": True}, {}) == " [error]"
+
+
+def test_elapsed_is_minutes_into_the_step_and_absent_without_a_clock():
+    assert elapsed({}) == ""                                  # nothing started the clock
+    assert elapsed({"t0": time.monotonic()}) == "[+00:00] "
+    assert elapsed({"t0": time.monotonic() - 125}) == "[+02:05] "
+
+
+def test_a_tool_call_is_stamped_with_how_far_into_the_step_it_is():
+    state = {"t0": time.monotonic() - 74}
+    event = {"type": "message_update",
+             "assistantMessageEvent": {"type": "toolcall_start", "toolName": "bash"}}
+    assert render_event(event, state) == "\n[+01:14] ⚙ bash "

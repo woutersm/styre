@@ -84,14 +84,30 @@ def test_describe_review_renders_hits_and_the_no_hits_case(repo):
     assert "Phase 2: Touches nothing\n  no existing repo references found" in out
 
 
-def test_review_subcommand_runs_against_a_real_repo(repo):
+def test_check_cross_references_the_repo_as_well_as_validating(repo):
+    """`check` answers one question — is this safe to start tonight — with both halves."""
     add_test_file(repo, "test_widget.py", "from app import WidgetFactory\n")
     (repo / "design.md").write_text(DESIGN, encoding="utf-8")
     subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
     subprocess.run(["git", "commit", "-qm", "design"], cwd=repo, check=True)
     result = subprocess.run(
-        [sys.executable, "-m", "styre", "review", "design.md"],
+        [sys.executable, "-m", "styre", "check", "design.md"],
         cwd=repo, capture_output=True, text=True,
         env={**os.environ, "PYTHONPATH": str(ROOT)})
     assert result.returncode == 0
-    assert "WidgetFactory" in result.stdout
+    assert "exit criteria:" in result.stdout                    # the design, described
+    assert "tests/test_widget.py:1:" in result.stdout           # and cross-referenced
+    assert "Design looks runnable" in result.stdout
+
+
+def test_check_skips_the_cross_reference_when_the_design_is_unrunnable(repo):
+    """A design that does not parse cannot be run, so greping for its names is noise."""
+    add_test_file(repo, "test_widget.py", "from app import WidgetFactory\n")
+    (repo / "design.md").write_text("## Phase 1: X\nRename `WidgetFactory`.\n", encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, "-m", "styre", "check", "design.md"],
+        cwd=repo, capture_output=True, text=True,
+        env={**os.environ, "PYTHONPATH": str(ROOT)})
+    assert result.returncode == 1
+    assert "no '### Exit criteria' list" in result.stdout
+    assert "tests/test_widget.py" not in result.stdout

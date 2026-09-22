@@ -1,6 +1,7 @@
 """The whole loop, driven by the fake pi on PATH (tests/fake_pi.py)."""
 import json
 import sys
+import time
 
 import pytest
 
@@ -21,7 +22,9 @@ def test_happy_path_commits_one_per_phase(styre, repo, commits):
     r = styre("run", "design.md", "--quiet")
     assert r.returncode == 0, r.stdout + r.stderr
     assert commits()[:2] == ["Phase 2: Second phase", "Phase 1: First phase"]
-    assert (run_dir(repo) / "report.md").read_text(encoding="utf-8").count(": done,") == 2
+    # The run's own report is summarize's, written as the run ends.
+    summary = (run_dir(repo) / "summary.md").read_text(encoding="utf-8")
+    assert summary.count("| committed |") == 2 and summary in r.stdout
     assert (repo / "AGENTS.md").exists()
     assert "## Phase 1" in (repo / "docs" / "decisions.md").read_text(encoding="utf-8")
 
@@ -83,7 +86,8 @@ def test_done_with_unmet_criteria_is_rejected(styre, repo, commits):
     r = styre("run", "design.md", "--quiet", plan={"phase1.prompt.md": "lying"})
     assert r.returncode == 1
     assert "reported DONE but listed unmet criteria" in r.stdout
-    assert "unmet: the second criterion" in (run_dir(repo) / "report.md").read_text(encoding="utf-8")
+    assert "unmet criterion: the second criterion" in (
+        run_dir(repo) / "summary.md").read_text(encoding="utf-8")
 
 
 def test_a_phase_that_changes_nothing_is_not_committed(styre, repo, commits):
@@ -112,8 +116,11 @@ def test_from_phase_resumes_without_rerunning_earlier_phases(styre, repo, commit
     before = commits()
     r = styre("run", "design.md", "--quiet", "--from-phase", "2", "--allow-dirty")
     assert r.returncode == 0, r.stdout + r.stderr
-    assert "Phase 1: First phase" not in r.stdout
     assert len(commits()) == len(before) + 1
+    # Phase 1 was not run again: the resumed invocation appends to the same timeline, and
+    # phase 1 still has only the one pi step the first invocation gave it.
+    steps = [e for e in timeline(repo) if e["event"] == "pi_end" and e["phase"] == 1]
+    assert len(steps) == 1
 
 
 def test_each_run_gets_its_own_directory(styre, repo, commits):
@@ -125,7 +132,7 @@ def test_each_run_gets_its_own_directory(styre, repo, commits):
     # Nothing from the first run was overwritten, so the two can be compared.
     for d in (first, second):
         assert (d / "phase1.prompt.md").exists() and (d / "logs" / "phase1.events.jsonl").exists()
-        assert (d / "report.md").exists()
+        assert (d / "summary.md").exists()
 
 
 def test_the_agents_two_files_are_collected_into_the_run_directory(styre, repo, commits):
@@ -261,7 +268,6 @@ def test_summarize_reports_the_run_that_just_happened(styre, repo, commits):
     assert f"# Run {run_dir(repo).name}" in r.stdout
     assert "| 1 | Phase 1: First phase  | committed |" in r.stdout
     assert "gate failed in builder (exit 1): `test -f done.txt`" in r.stdout
-    assert "| 1     | bash |" in r.stdout                    # tools, from the events file
     assert (run_dir(repo) / "summary.md").read_text(encoding="utf-8").startswith("# Run ")
 
 
@@ -294,6 +300,47 @@ def test_a_dirty_tree_is_refused(styre, repo, commits):
     r = styre("run", "design.md", "--quiet")
     assert r.returncode == 1
     assert "Working tree is not clean" in r.stderr
+
+
+def test_the_gate_and_the_commit_are_narrated_as_they_happen(styre, repo, commits):
+    """A gate is the longest silence in a phase; an unattended run should say what it is on."""
+    r = styre("run", "design.md", "--quiet",
+              plan={"phase1.prompt.md": "bad_gate", "phase1.fix1.md": "ok"})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "$ test -f done.txt → FAILED (exit 1)" in r.stdout      # the round that failed
+    assert "$ test -f done.txt → ok (" in r.stdout                 # and the one that passed
+    assert "test guard → ok" in r.stdout
+    assert "✓ committed " in r.stdout and "Phase 1: First phase" in r.stdout
+
+
+def test_the_agents_output_is_stamped_with_how_far_into_the_phase_it_is(styre, repo, commits):
+    styre("run", "design.md")
+    log = (run_dir(repo) / "logs" / "phase1.log").read_text(encoding="utf-8")
+    assert "[+00:0" in log
+    assert "⚙ bash" in log          # the tool call is stamped too, not just the reply
+
+
+def test_the_readable_log_is_written_while_the_phase_is_still_running(styre, repo):
+    """`tail -f` on the log has to follow a phase in flight, not appear once it is over."""
+    # The fake agent prints its whole transcript and then sleeps, so anything in the log
+    # before the idle watchdog kills it was necessarily written mid-phase.
+    p = styre("run", "design.md", "--quiet", "--timeout", "3", default="hang", background=True)
+    try:
+        seen = ""
+        for _ in range(100):
+            logs = list((repo / ".styre" / "runs").glob("*/logs/phase1.log"))
+            if logs:
+                seen = logs[0].read_text(encoding="utf-8")
+            if "Ran phase1.prompt.md" in seen:
+                break
+            time.sleep(0.2)
+        assert "Ran phase1.prompt.md" in seen
+    finally:
+        assert p.wait(timeout=60) == 1          # the watchdog stopped it; no orphaned pi
+        p.stdout.close()
+    # The watchdog measures silence, not total runtime, and the log says which it was.
+    assert "TIMEOUT: no output for 3s" in (
+        run_dir(repo) / "logs" / "phase1.log").read_text(encoding="utf-8")
 
 
 def test_events_and_log_are_written_separately(styre, repo, commits):

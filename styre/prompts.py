@@ -5,10 +5,17 @@ loads into every run. The prompt's fixed cost is amortised across phases, so it 
 bytes: the honesty rules around `unmet_criteria` earn their space.
 """
 import hashlib
+import re
 from pathlib import Path
 
 from styre.agents import AGENTS_BODY
 from styre.config import DECISIONS
+
+# Every "## ..." heading in the decisions log, not only the "## Phase N" ones. The design
+# parser splits on phase headings alone and folds anything else into the phase above it;
+# here that would smuggle a hand-written "## Post-run corrections" section into the prompt
+# on the back of the phase it happens to follow.
+_HEADING_RE = re.compile(r"(?m)^##\s+(.+?)\s*$")
 
 
 def template_hash():
@@ -21,6 +28,31 @@ def template_hash():
     except OSError:  # no source on disk; the AGENTS.md block alone still tells them apart
         pass
     return h.hexdigest()[:16]
+
+
+def scope_decisions(text, phases):
+    """The part of the decisions log that belongs to *this* design.
+
+    `docs/decisions.md` is per project and append-only, so a repo that has run more than one
+    design accumulates every design's sections in it. All of it used to ship in every phase
+    prompt. On one real repo that was 29.6 KB of a 38.4 KB prompt — 77% of what the local
+    model read was another plan's history, and the model returned an empty response rather
+    than the phase.
+
+    The file stays whole on disk; it is the durable record, and that decision is unchanged.
+    Only the sections whose `## Phase N: Title` heading matches one of this design's phase
+    titles are transmitted. The agent is told to write exactly that heading (see
+    `build_prompt`), so a match is the same string on both sides.
+
+    Anything else — another design's phases, a hand-written note, the preamble — is dropped.
+    `runner` prints how much, because a section silently missing from a prompt is the kind
+    of thing that is only noticed at 3am.
+    """
+    titles = {p.title.strip() for p in phases}
+    parts = _HEADING_RE.split(text)
+    kept = [f"## {parts[i].strip()}\n{parts[i + 1].rstrip()}"
+            for i in range(1, len(parts), 2) if parts[i].strip() in titles]
+    return "\n\n".join(kept).strip()
 
 
 def build_prompt(context, n, phase, decisions, notes):

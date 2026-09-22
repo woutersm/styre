@@ -76,7 +76,8 @@ def styre(repo, fake_pi):
     `plan` maps a prompt file name (`phase1.prompt.md`, `phase1.fix1.md`, ...) to one of the
     fake agent's actions; `default` is used for the names it does not mention.
     """
-    def call(*args, plan=None, default="ok", path=None, timeout=120, claude_mode=None):
+    def call(*args, plan=None, default="ok", path=None, timeout=120, claude_mode=None,
+             background=False):
         env = dict(os.environ)
         env["PATH"] = path if path is not None else fake_pi
         env["PYTHONPATH"] = str(ROOT)
@@ -85,7 +86,11 @@ def styre(repo, fake_pi):
         env["FAKE_PI_DEFAULT"] = default
         if claude_mode is not None:
             env["FAKE_CLAUDE_MODE"] = claude_mode
-        return subprocess.run([sys.executable, "-m", "styre", *args], cwd=repo, env=env,
+        argv = [sys.executable, "-m", "styre", *args]
+        if background:  # for tests that have to look at a run while it is still going
+            return subprocess.Popen(argv, cwd=repo, env=env, stdout=subprocess.PIPE,
+                                    stderr=subprocess.STDOUT, text=True)
+        return subprocess.run(argv, cwd=repo, env=env,
                               capture_output=True, text=True, timeout=timeout)
     return call
 

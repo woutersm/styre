@@ -21,9 +21,11 @@ BEGIN, END = "<!-- styre:begin -->", "<!-- styre:end -->"
 EXCLUDES = [".styre/", "__pycache__/", ".pytest_cache/", ".ruff_cache/", "*.pyc", "node_modules/", ".venv/"]
 
 DEFAULT_RETRIES = 2
-DEFAULT_TIMEOUT = 7200  # 2 h; a real phase was measured at ~60 min, so 90 was too tight
+# Seconds of *silence* allowed from pi, not total runtime — see process._watch_idle. It
+# stays in hours rather than minutes because pi emits nothing at all for the length of a
+# single tool call, so a long test suite inside a phase must not read as a dead link.
+DEFAULT_TIMEOUT = 7200
 DEFAULT_GATE_TIMEOUT = 900
-MAX_TOUCHES = 2  # Claude touches per stuck phase before it stops for a human; see touch.py
 
 
 @dataclass

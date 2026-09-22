@@ -12,8 +12,8 @@ from styre.runner import PreflightError, orchestrate, preflight
 from styre.summarize import summarize
 
 EXAMPLES = """examples:
-  styre check design.md                 validate the design and print what it will run
-  styre review design.md                find existing repo code each phase's prose touches
+  styre check design.md                 validate the design, print what it will run, and
+                                        find existing repo code its phases already name
   styre run design.md                   run every phase, one commit each
   styre run design.md --from-phase 2    resume after a stop
   styre summarize                       what happened in the last run
@@ -36,17 +36,18 @@ def load_design(path):
 
 
 def cmd_check(args):
+    """Validate the design, print it, and — once it is structurally runnable — cross-
+    reference it against the repository. Both halves answer the same question, "is this
+    safe to start tonight", so they are one command rather than two to remember."""
     phases = load_design(args.design)
     problems = validate(phases)
     print(describe(phases))
-    print("\n" + ("Problems:\n  " + "\n  ".join(problems) if problems else
-                  "Design looks runnable. Read the criteria and gates before you approve."))
-    return 1 if problems else 0
-
-
-def cmd_review(args):
-    phases = load_design(args.design)
+    if problems:
+        print("\nProblems:\n  " + "\n  ".join(problems))
+        return 1
+    print("\n--- What each phase's prose already names in this repository ---")
     print(describe_review(phases))
+    print("\nDesign looks runnable. Read the criteria and gates before you approve.")
     return 0
 
 
@@ -69,7 +70,7 @@ def cmd_run(args):
         run = preflight(args.design, opts)
     except PreflightError as e:
         sys.exit(str(e))
-    return orchestrate(args.design, phases, opts, run)
+    return orchestrate(args.design, opts, run)
 
 
 def cmd_summarize(args):
@@ -91,14 +92,11 @@ def build_parser():
     ap.add_argument("--version", action="version", version=f"styre {__version__}")
     sub = ap.add_subparsers(dest="command", metavar="<command>")
 
-    check = sub.add_parser("check", help="print phases, criteria and gates, then exit")
+    check = sub.add_parser(
+        "check", help="validate the design, print its phases and gates, and find existing "
+                      "repo code each phase's prose already names")
     check.add_argument("design", help="the design document")
     check.set_defaults(func=cmd_check)
-
-    review = sub.add_parser(
-        "review", help="find existing repo code/tests each phase's prose already touches")
-    review.add_argument("design", help="the design document")
-    review.set_defaults(func=cmd_review)
 
     run = sub.add_parser("run", help="run the design, one commit per phase")
     run.add_argument("design", help="the design document")
@@ -109,7 +107,9 @@ def build_parser():
     run.add_argument("--retries", type=int, default=DEFAULT_RETRIES,
                      help=f"fix rounds per phase after a failed gate (default {DEFAULT_RETRIES})")
     run.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT, metavar="SECONDS",
-                     help=f"seconds per pi run, 0 disables (default {DEFAULT_TIMEOUT})")
+                     help=f"seconds of silence before a pi run is killed, 0 disables "
+                          f"(default {DEFAULT_TIMEOUT}); a phase that keeps printing is "
+                          f"never cut off")
     run.add_argument("--gate-timeout", type=int, default=DEFAULT_GATE_TIMEOUT, metavar="SECONDS",
                      help=f"seconds per gate command, 0 disables (default {DEFAULT_GATE_TIMEOUT})")
     run.add_argument("--quiet", action="store_true", help="do not echo the agent's output while it works")
@@ -121,9 +121,9 @@ def build_parser():
     run.add_argument("--reset-branch", action="store_true",
                      help="discard an existing run branch and restart it at HEAD (destructive)")
     run.add_argument("--claude-touch", action="store_true",
-                     help="on a stop, let Claude (via `claude -p`) review and, bounded, "
-                          "execute a stuck phase directly before giving up — real, automatic "
-                          "spend against the Claude CLI; off by default")
+                     help="on a stop, give Claude (via `claude -p`) one turn at the stuck "
+                          "phase before giving up — real, automatic spend against the "
+                          "Claude CLI; off by default")
     run.set_defaults(func=cmd_run)
 
     summary = sub.add_parser("summarize", help="report what happened in a run")

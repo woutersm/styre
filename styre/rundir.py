@@ -66,15 +66,6 @@ class RunDir:
         return self.root / "timeline.jsonl"
 
     @property
-    def report(self):
-        return self.root / "report.md"
-
-    @property
-    def touches(self):
-        """How many Claude touches each phase has had in this run — see touch.py."""
-        return self.root / "touches.json"
-
-    @property
     def review(self):
         """`styre review`'s output, written automatically at the start of every run."""
         return self.root / "review.md"

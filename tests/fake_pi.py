@@ -37,6 +37,10 @@ def transcript(text):
     emit({"type": "message_update", "assistantMessageEvent":
           {"type": "thinking_delta", "contentIndex": 0, "delta": "secret deliberation"}})
     emit({"type": "message_update", "assistantMessageEvent": {"type": "thinking_end", "contentIndex": 0}})
+    # Real pi announces the call in the message stream first, then executes it (confirmed in
+    # tests/fixtures/pi_toolcall.jsonl); the renderer's elapsed stamp hangs off that event.
+    emit({"type": "message_update", "assistantMessageEvent":
+          {"type": "toolcall_start", "contentIndex": 0, "toolName": "bash"}})
     emit({"type": "tool_execution_start", "toolCallId": "t1", "toolName": "bash",
           "args": {"command": "ls -la"}})
     time.sleep(0.01)

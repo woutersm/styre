@@ -30,11 +30,10 @@ def make_run(tmp_path, timeline=(), states=(), fixture="pi_toolcall.jsonl", phas
     return run
 
 
-def test_read_events_unwraps_our_timestamp_from_pis_event(tmp_path):
+def test_read_events_unwraps_pis_event_from_our_wrapper(tmp_path):
     events_file(tmp_path / "e.jsonl", FIXTURES / "pi_simple.jsonl")
-    pairs = list(read_events(tmp_path / "e.jsonl"))
-    assert pairs and all(ts is not None for ts, _ in pairs)
-    assert pairs[0][1]["type"] == "session"
+    events = list(read_events(tmp_path / "e.jsonl"))
+    assert events and events[0]["type"] == "session"
 
 
 def test_read_events_skips_lines_that_are_not_events(tmp_path):
@@ -42,27 +41,24 @@ def test_read_events_skips_lines_that_are_not_events(tmp_path):
     path.write_text('{"ts": "2026-09-20T22:00:00+02:00", "line": "pi: something went wrong"}\n'
                     '{"ts": "2026-09-20T22:00:01+02:00", "line": "{\\"type\\": \\"agent_end\\"}"}\n'
                     'not json at all\n', encoding="utf-8")
-    assert [e["type"] for _, e in read_events(path)] == ["agent_end"]
+    assert [e["type"] for e in read_events(path)] == ["agent_end"]
 
 
-def test_tool_calls_are_paired_by_id_and_timed_from_our_stamps(tmp_path):
-    run = make_run(tmp_path)
-    phase = collect(run).phases[0]
-    assert phase.tools["bash"].calls == 1 and phase.tools["bash"].errors == 0
-    assert phase.tools["bash"].seconds > 0          # measured between the two arrival stamps
-    assert phase.longest[0][1] == "bash" and phase.longest[0][2] == "ls -la"
+def test_a_clean_tool_call_produces_no_noise(tmp_path):
+    # Only failures are counted: a phase whose tools all worked has nothing to report.
+    assert collect(make_run(tmp_path)).phases[0].tool_errors == {}
 
 
-def test_a_tool_call_that_never_finished_is_still_counted(tmp_path):
-    path = tmp_path / "e.jsonl"
-    path.write_text('{"ts": "2026-09-20T22:00:00+02:00", "line": '
-                    '"{\\"type\\": \\"tool_execution_start\\", \\"toolCallId\\": \\"a\\", '
-                    '\\"toolName\\": \\"bash\\", \\"args\\": {\\"command\\": \\"sleep 999\\"}}"}\n',
-                    encoding="utf-8")
+def test_a_failed_tool_call_is_counted_and_reported(tmp_path):
     run = RunDir(tmp_path / "run")
     (run.root / "logs").mkdir(parents=True)
-    path.replace(run.events(1))
-    assert collect(run).phases[0].tools["bash"].calls == 1
+    run.events(1).write_text(
+        '{"ts": "2026-09-20T22:00:00+02:00", "line": '
+        '"{\\"type\\": \\"tool_execution_end\\", \\"toolName\\": \\"bash\\", '
+        '\\"isError\\": true}"}\n', encoding="utf-8")
+    summary = collect(run)
+    assert summary.phases[0].tool_errors == {"bash": 1}
+    assert "1 failed bash call(s)" in render(summary)
 
 
 def test_the_captured_fixtures_have_zero_usage_and_that_is_read_as_zero(tmp_path):
@@ -159,9 +155,9 @@ def test_state_files_fill_in_for_a_phase_the_timeline_never_finished(tmp_path):
 
 
 def test_a_run_without_a_timeline_still_summarises_what_it_has(tmp_path):
-    text = render(collect(make_run(tmp_path)))
-    assert "Incomplete" in text and "timeline.jsonl" in text
-    assert "## Tools" in text and "bash" in text     # the events file is still readable
+    summary = collect(make_run(tmp_path))
+    assert "Incomplete" in render(summary) and "timeline.jsonl" in render(summary)
+    assert summary.phases[0].usage.steps == 2       # the events file is still readable
 
 
 def test_summarize_writes_summary_md_into_the_run(tmp_path):

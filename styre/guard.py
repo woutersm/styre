@@ -4,6 +4,7 @@ Agents game weak tests — deleted assertions, skip markers, hard-coded returns.
 the arbiter of a phase, and this guard catches the cheapest way of making a red suite green.
 """
 import re
+import time
 
 from styre.gitops import stage_all, staged_diff
 from styre.process import run
@@ -51,9 +52,16 @@ def verify(phase, log, gate_timeout=None, allow_test_changes=False, timeline=Non
     """
     tl = timeline or Timeline()
     for cmd in phase.gate:
+        # Printed before the command runs, finished after it: a gate is the longest silence
+        # in a phase — a test suite can hold the terminal for minutes — and an unattended run
+        # being watched at 11pm should show what it is waiting on rather than nothing.
+        print(f"    $ {cmd}", end="", flush=True)
+        started = time.monotonic()
         with tl.span("gate", phase=phase_n, step=step, command=cmd) as end:
             rc, out = run(cmd, shell=True, log=log, timeout=gate_timeout or None)
             end["rc"] = rc
+        verdict = "ok" if rc == 0 else f"FAILED (exit {rc})"
+        print(f" → {verdict} ({time.monotonic() - started:.1f}s)", flush=True)
         if rc != 0:
             return (f"gate failed: {cmd[:60]}",
                     f"Gate command failed: `{cmd}` (exit code {rc}). Output tail:\n{out[-6000:]}")
@@ -61,6 +69,7 @@ def verify(phase, log, gate_timeout=None, allow_test_changes=False, timeline=Non
         stage_all()
         problem = test_tampering(staged_diff())
         tl.event("guard_result", phase=phase_n, step=step, ok=problem is None, problem=problem)
+        print(f"    test guard → {'ok' if problem is None else 'REJECTED'}", flush=True)
         if problem:
             return "test guard: skipped or removed tests", "Test guard: " + problem
     return None
