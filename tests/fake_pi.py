@@ -26,6 +26,23 @@ def emit(obj):
     sys.stdout.flush()
 
 
+def empty_transcript():
+    """What pi prints when the provider returns nothing: a turn that opens, a message_end
+    with an all-zero usage block, and a clean exit. Captured from a real refusal on
+    2026-09-22, where the model host rejected the prefill for memory."""
+    emit({"type": "session", "version": 3, "id": "fake", "timestamp": "2026-09-19T18:00:00.000Z",
+          "cwd": os.getcwd()})
+    emit({"type": "agent_start"})
+    emit({"type": "turn_start"})
+    emit({"type": "message_start", "message": {"role": "assistant", "content": []}})
+    emit({"type": "message_end", "message": {"role": "assistant", "content": [],
+          "usage": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0,
+                    "totalTokens": 0, "cost": {"total": 0}}}})
+    emit({"type": "turn_end", "toolResults": []})
+    emit({"type": "agent_end", "messages": [], "willRetry": False})
+    emit({"type": "agent_settled"})
+
+
 def transcript(text):
     emit({"type": "session", "version": 3, "id": "fake", "timestamp": "2026-09-19T18:00:00.000Z",
           "cwd": os.getcwd()})
@@ -99,6 +116,8 @@ def write_decisions(n):
 
 
 def act(action, n):
+    if action == "empty":
+        return  # the transcript already said it all: nothing came back, nothing is written
     if action == "crash":
         sys.exit(3)
     if action == "hang":
@@ -161,8 +180,18 @@ def main():
     plan = json.loads(os.environ.get("FAKE_PI_PLAN", "{}"))
     action = plan.get(name, os.environ.get("FAKE_PI_DEFAULT", "ok"))
     n = int(re.search(r"phase(\d+)", name).group(1)) if re.search(r"phase(\d+)", name) else 1
-    write_session(flag("--session-dir"), flag("--name"))
-    transcript(f"Ran {name} with action {action}.")
+    # Record the pi config directory this process was handed, so a test can assert on what
+    # the child actually saw rather than on what the parent meant to set.
+    sd = flag("--session-dir")
+    if sd:
+        run_root = Path(sd).parent.parent
+        (run_root / f"phase{n}.piconfig").write_text(
+            os.environ.get("PI_CODING_AGENT_DIR", ""), encoding="utf-8")
+    write_session(sd, flag("--name"))
+    if action == "empty":
+        empty_transcript()
+    else:
+        transcript(f"Ran {name} with action {action}.")
     act(action, n)
 
 

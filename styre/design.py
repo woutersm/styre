@@ -26,6 +26,45 @@ import re
 from dataclasses import dataclass, field
 
 PHASE_RE = re.compile(r"(?m)^##\s+(Phase\s+\d+.*?)\s*$")
+# A markdown document named anywhere in the design, backticked or bare. Code paths are not
+# matched: a phase naming `src/app/dates.py` is naming the file it creates, which is the
+# point. A *document* is something the agent will go and read.
+DOC_RE = re.compile(r"`?((?:[\w.\-]+/)*[\w.\-]+\.md)`?")
+# Files the agent is told to write, or that pi loads on its own. Naming these is correct.
+CONTRACT_DOCS = frozenset({"decisions.md", "AGENTS.md", "notes-next.md"})
+# Naming a document is fine — a design cross-references other plans all the time. What is
+# not fine is *telling the agent to go and read one*, so only a reading verb near the path
+# counts. Without this the check reported 7 documents on a real design where 1 mattered,
+# which is the failure `review.py` already made once: signal buried in true-but-useless.
+READ_RE = re.compile(r"\b(read|consult|refer to|study|look at|open)\b", re.I)
+# "Do not open anything in `docs/` — not `agent-design.md`" is a design doing the right
+# thing, and warning about it would teach the reader to ignore the warning. A negation just
+# before the verb flips the meaning.
+NOT_RE = re.compile(r"\b(do not|don't|never|no need to|rather than|instead of|without)\b\W*$",
+                    re.I)
+READ_WINDOW = 160
+NEGATION_WINDOW = 40
+MANY_CRITERIA = 8
+# The test guard rejects an added skip or xfail marker, so a design that *asks* for one has
+# written a phase that cannot pass its own verification. Measured 2026-09-23: app's phase
+# 12 said "skip on non-macOS as `tests/test_scripts.py` already does", the agent did
+# exactly that, and the guard rejected the phase — the guard overruling the human, resolved
+# only by spending a fix round arguing the markers back out. styre's own suite skips on
+# Windows for the same reason, so this is not a rare shape.
+# Only the directive forms. A bare "skip" is ordinary English, and on a real design the
+# loose version flagged "`rrule`'s skipping behaviour" — the subject under test, not a test
+# skip — which is the signal-in-noise failure `review.py` made once with MAX_HITS and
+# `doc_references` made with its seven documents. A marker name, "skip" governing a test
+# noun, or "skip on/when/unless" governing a condition: nothing else counts.
+SKIP_RE = re.compile(r"\b(?:skipif|xfail|xit)\b"
+                     r"|\b(?:pytest\.mark\.skip|unittest\.skip)"
+                     r"|\bskip(?:ped)?\s+(?:this|these|those|that|the|a|any|it|them|"
+                     r"[\w.\-/]*test[\w.\-/]*)\b"
+                     r"|\bskip(?:ped)?\s+(?:on|when|unless|if|under|for)\b", re.I)
+# Even a directive needs to be about tests: "the poller will skip on a retryable error" is
+# not this warning's business.
+TEST_WORD_RE = re.compile(r"\b(test|tests|pytest|unittest|suite|spec)\b", re.I)
+SKIP_WINDOW = 120
 SECTION_RE = re.compile(r"(?m)^###\s+(.+?)\s*$")
 FENCE_RE = re.compile(r"```[a-z]*\n(.*?)```", re.S)
 
@@ -83,6 +122,97 @@ def validate(phases):
     problems += [f"Phase {i} has no '### Gate' code block."
                  for i, p in enumerate(phases, 1) if not p.gate]
     return problems
+
+
+def doc_references(text, design_path=""):
+    """Markdown documents a chunk of design prose names, minus the ones it is meant to.
+
+    A phase that points the agent at a document has an unbounded prompt: the document's
+    size is not in the design and nobody sees it until the run is going. On one real design
+    a single preamble line — "the design means `docs/agent-design.md`, read it first" —
+    turned a 2.3 KB phase into a 44 KB context, the model returned zero tokens, and the
+    failure surfaced as "no state file written". `styre check` said the design was runnable
+    throughout, because structurally it was.
+    """
+    own = design_path.replace("\\", "/").split("/")[-1] if design_path else ""
+    found, seen = [], set()
+    for m in DOC_RE.finditer(text):
+        doc = m.group(1)
+        name = doc.split("/")[-1]
+        if name in CONTRACT_DOCS or name == own or name in seen:
+            continue
+        lo = max(0, m.start() - READ_WINDOW)
+        near = text[lo:m.end() + READ_WINDOW]
+        if not any(not NOT_RE.search(near[max(0, r.start() - NEGATION_WINDOW):r.start()])
+                   for r in READ_RE.finditer(near)):
+            continue  # every reading verb nearby is negated: the design forbids the read
+        seen.add(name)
+        found.append(doc)
+    return found
+
+
+def skip_requests(text):
+    """Excerpts where a phase's prose asks for a skipped or xfailed test.
+
+    The guard is not negotiable and the design is written by a human, so the two
+    contradicting each other is the design's bug to fix: the phase will be rejected for
+    doing what it was told. Only a skip *near a test word* counts, and a negation just
+    before it flips the meaning — "never skip a test" is the design agreeing with the
+    guard, and warning about that would teach the reader to ignore the warning.
+    """
+    for m in SKIP_RE.finditer(text):
+        lo = max(0, m.start() - SKIP_WINDOW)
+        near = text[lo:m.end() + SKIP_WINDOW]
+        if not TEST_WORD_RE.search(near):
+            continue
+        if NOT_RE.search(text[max(0, m.start() - NEGATION_WINDOW):m.start()]):
+            continue
+        line = next((ln for ln in text.splitlines() if m.group(0) in ln), m.group(0))
+        return " ".join(line.strip().lstrip("-*# ").split())[:160]
+    return None
+
+
+def advisories(text, phases, sizes, design_path=""):
+    """Things that make a design risky without making it unrunnable, so `check` can say them
+    before a night is spent rather than after. `sizes` is each phase's prompt length in
+    bytes, parallel to `phases`."""
+    out = []
+    pre = doc_references(preamble(text), design_path)
+    if pre:
+        out.append(f"The preamble names {len(pre)} document(s) — "
+                   + ", ".join(f"`{d}`" for d in pre) + ".\n"
+                   "    The preamble reaches every phase, so every phase may go and read "
+                   "them. A phase that\n    reads a document has an unbounded prompt. Fold "
+                   "what each phase needs into the phase.")
+    for i, phase in enumerate(phases, 1):
+        quote = skip_requests(phase.body)
+        if quote:
+            out.append(f"Phase {i} asks for a skipped test — \"{quote}\".\n"
+                       "    The test guard rejects an added skip or xfail marker, so this "
+                       "phase fails verification\n    for doing what the design told it "
+                       "to. Drop the instruction, or run with --allow-test-changes.")
+        docs = doc_references(phase.body, design_path)
+        if docs:
+            out.append(f"Phase {i} names " + ", ".join(f"`{d}`" for d in docs)
+                       + " — check the agent is meant to write it, not read it.")
+    # A phase that is much bigger than its neighbours, or that carries a lot of criteria, is
+    # the shape that fails: one such phase was split in two and went from three failures to
+    # committing on the first try. Both thresholds are advice, never an error.
+    # Lower middle, so a two-phase design can still flag its larger half; on a long
+    # design the choice barely moves.
+    median = (sorted(sizes)[(len(sizes) - 1) // 2]
+              if sizes and len(sizes) == len(phases) else 0)
+    for i, phase in enumerate(phases, 1):
+        size = sizes[i - 1] if median else 0
+        why = []
+        if median and size > 1.6 * median:
+            why.append(f"{size / 1024:.1f} KB, {size / median:.1f}x the median prompt")
+        if len(phase.criteria) > MANY_CRITERIA:
+            why.append(f"{len(phase.criteria)} exit criteria")
+        if why:
+            out.append(f"Phase {i} is large — " + " and ".join(why)
+                       + ". A phase whose title says \"and\" is usually two phases.")
+    return out
 
 
 def describe(phases):

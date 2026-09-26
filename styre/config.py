@@ -5,10 +5,24 @@ particular is a constant because the event parsing requires `--mode json`.
 """
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
 PI = ["pi", "-p", "--mode", "json"]  # json mode is not optional: we parse the event stream
+
+# pi's config directory for a styre run, exported to every pi process. An unattended run
+# must not inherit an interactive setup: measured on 2026-09-23, the operator's own config
+# put 11,551 chars of `pi-web-access` tool schemas and a 10,888-char writing-style
+# AGENTS.md into *every request of every turn* — 47% of a phase's starting context, for an
+# agent with no network tests and no human reading its prose. It also pins down a hazard
+# this file already warned about: PI_CODING_AGENT_DIR is exported from ~/.zshrc, so a run
+# started by cron or launchd fell back to the dead pre-16-September ~/.pi/agent tree.
+# Keep it lean: models.json, auth.json, a settings.json with no packages, and no AGENTS.md.
+# $STYRE_PI_CONFIG_DIR exists so the test suite can point at a temporary directory instead
+# of the developer's home; it is not a user-facing knob and `run` has no flag for it.
+PI_CONFIG_DIR = Path(os.environ.get("STYRE_PI_CONFIG_DIR")
+                     or Path.home() / ".config" / "pi" / "styre")
 # --output-format json gives one parseable object with `result`, `is_error`, `total_cost_usd`.
 # --dangerously-skip-permissions is required for unattended tool use (verified 2026-09-21:
 # --permission-mode acceptEdits still denies Bash outright); see CLAUDE.md's "supervising

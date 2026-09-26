@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from styre.rundir import RunDir
-from styre.summarize import Usage, collect, read_events, render, summarize
+from styre.summarize import Phase, Usage, collect, read_events, render, summarize
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
@@ -65,23 +65,42 @@ def test_the_captured_fixtures_have_zero_usage_and_that_is_read_as_zero(tmp_path
     # These were captured before the provider was fixed to report usage. A parser must read
     # them as zeros, not conclude that counts are always zero.
     phase = collect(make_run(tmp_path)).phases[0]
-    assert phase.usage.input == 0 and phase.usage.output == 0
+    assert phase.usage.peak == 0 and phase.usage.output == 0
 
 
 def test_real_token_counts_are_read_off_a_post_fix_capture(tmp_path):
     # pi_usage.jsonl was captured after the mlxserve provider was set to report usage while
     # streaming, so unlike the older fixtures it carries real numbers.
     usage = collect(make_run(tmp_path, fixture="pi_usage.jsonl")).phases[0].usage
-    assert (usage.input, usage.output, usage.cache_read) == (1560, 23, 6144)
+    assert (usage.peak, usage.output, usage.cache_read) == (7727, 23, 6144)
     assert usage.reasoning == 0                           # reported as zero, not absent
 
 
-def test_usage_takes_the_last_input_and_sums_the_output():
+def test_usage_takes_the_peak_context_and_sums_the_output():
+    """`input` is per-step uncached prefill on this provider, not a running total, so the
+    last value is one step's tail. `totalTokens` is the measured context."""
     u = Usage()
     u.add({"input": None, "output": None})                       # the first message_end
     u.add({"input": 1507, "output": 34, "cacheRead": 6144, "totalTokens": 7685})
-    u.add({"input": 2200, "output": 50, "cacheRead": 1000})
-    assert (u.input, u.output, u.cache_read) == (2200, 84, 7144)
+    u.add({"input": 2200, "output": 50, "cacheRead": 1000, "totalTokens": 9935})
+    u.add({"input": 1149, "output": 20, "cacheRead": 500, "totalTokens": 9000})
+    assert (u.peak, u.output, u.cache_read) == (9935, 104, 7644)   # peak, not the last
+
+
+def test_peak_context_is_absent_not_zero_when_the_provider_omits_it():
+    u = Usage()
+    u.add({"input": 10, "output": 40})
+    assert u.peak is None                                 # absent, which is not zero
+
+
+def test_the_run_total_peak_is_the_largest_phase_not_their_sum(tmp_path):
+    run = make_run(tmp_path, timeline=TIMELINE)
+    summary = collect(run)
+    summary.phases[0].usage.peak = 44766
+    summary.phases.append(Phase(n=2, usage=Usage(peak=86334)))
+    text = render(summary)
+    assert "86,334" in text and "131,100" not in text     # max, never a sum
+    assert "Peak ctx" in text and "Input" not in text
 
 
 def test_thinking_is_not_reported_as_zero_when_the_provider_omits_it():
@@ -156,7 +175,7 @@ def test_state_files_fill_in_for_a_phase_the_timeline_never_finished(tmp_path):
 def test_a_run_without_a_timeline_still_summarises_what_it_has(tmp_path):
     summary = collect(make_run(tmp_path))
     assert "Incomplete" in render(summary) and "timeline.jsonl" in render(summary)
-    assert summary.phases[0].usage.input == 0       # the events file is still readable
+    assert summary.phases[0].usage.peak == 0       # the events file is still readable
 
 
 def test_summarize_writes_summary_md_into_the_run(tmp_path):

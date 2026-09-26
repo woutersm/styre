@@ -70,15 +70,26 @@ def fake_pi(tmp_path):
 
 
 @pytest.fixture
-def styre(repo, fake_pi):
+def pi_config(tmp_path):
+    """A lean pi config directory, the way preflight insists a real run has one."""
+    d = tmp_path / "piconfig"
+    d.mkdir()
+    (d / "models.json").write_text('{"providers": {}}', encoding="utf-8")
+    (d / "settings.json").write_text("{}", encoding="utf-8")
+    return d
+
+
+@pytest.fixture
+def styre(repo, fake_pi, pi_config):
     """Run the CLI in the repo with the fake agent on PATH.
 
     `plan` maps a prompt file name (`phase1.prompt.md`, `phase1.fix1.md`, ...) to one of the
     fake agent's actions; `default` is used for the names it does not mention.
     """
     def call(*args, plan=None, default="ok", path=None, timeout=120, claude_mode=None,
-             background=False):
+             background=False, env_extra=None):
         env = dict(os.environ)
+        env["STYRE_PI_CONFIG_DIR"] = str(pi_config)
         env["PATH"] = path if path is not None else fake_pi
         env["PYTHONPATH"] = str(ROOT)
         env["NO_COLOR"] = "1"
@@ -86,6 +97,7 @@ def styre(repo, fake_pi):
         env["FAKE_PI_DEFAULT"] = default
         if claude_mode is not None:
             env["FAKE_CLAUDE_MODE"] = claude_mode
+        env.update(env_extra or {})
         argv = [sys.executable, "-m", "styre", *args]
         if background:  # for tests that have to look at a run while it is still going
             return subprocess.Popen(argv, cwd=repo, env=env, stdout=subprocess.PIPE,

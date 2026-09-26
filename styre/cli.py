@@ -1,15 +1,17 @@
-"""Command line interface: the `check`, `run` and `summarize` subcommands."""
+"""Command line interface: the `check`, `run`, `summarize` and `watch` subcommands."""
 import argparse
 import sys
 from pathlib import Path
 
 from styre import __version__
 from styre.config import DEFAULT_GATE_TIMEOUT, DEFAULT_RETRIES, DEFAULT_TIMEOUT, RunOptions
-from styre.design import describe, parse_phases, validate
+from styre.design import advisories, describe, parse_phases, phase_context, validate
+from styre.prompts import build_prompt
 from styre.review import describe_review
 from styre.rundir import resolve
 from styre.runner import PreflightError, orchestrate, preflight
 from styre.summarize import summarize
+from styre.watch import DEFAULT_PORT, serve
 
 EXAMPLES = """examples:
   styre check design.md                 validate the design, print what it will run, and
@@ -18,13 +20,17 @@ EXAMPLES = """examples:
   styre run design.md --from-phase 2    resume after a stop
   styre summarize                       what happened in the last run
   styre summarize 20260920-233014       ... in a particular one
+  styre watch                           read-only web view of this repo's runs, live
 
 Run it from inside the target repository: styre switches branches and commits there.
 """
 
 
 def load_design(path):
-    """Read and parse a design file. Exits with a message if it cannot be used."""
+    """Read and parse a design file. Exits with a message if it cannot be used.
+
+    Returns (text, phases): `check` needs the document itself for the preamble.
+    """
     try:
         text = Path(path).read_text(encoding="utf-8")
     except OSError as e:
@@ -32,19 +38,32 @@ def load_design(path):
     phases = parse_phases(text)
     if not phases:
         sys.exit("No '## Phase N: ...' headings found in the design file.")
-    return phases
+    return text, phases
 
 
 def cmd_check(args):
     """Validate the design, print it, and — once it is structurally runnable — cross-
     reference it against the repository. Both halves answer the same question, "is this
     safe to start tonight", so they are one command rather than two to remember."""
-    phases = load_design(args.design)
+    text, phases = load_design(args.design)
     problems = validate(phases)
     print(describe(phases))
     if problems:
         print("\nProblems:\n  " + "\n  ".join(problems))
         return 1
+
+    sizes = [len(build_prompt(phase_context(text, phases, n), n, p, ""))
+             for n, p in enumerate(phases, 1)]
+    print("\n--- Prompt size per phase ---")
+    for n, (phase, size) in enumerate(zip(phases, sizes), 1):
+        print(f"  {n:>3}. {size / 1024:>5.1f} KB  {len(phase.criteria)} criteria  {phase.title}")
+
+    notes = advisories(text, phases, sizes, args.design)
+    if notes:
+        print("\n--- Worth a look before you start ---")
+        for note in notes:
+            print(f"  ⚠ {note}")
+
     print("\n--- What each phase's prose already names in this repository ---")
     print(describe_review(phases))
     print("\nDesign looks runnable. Read the criteria and gates before you approve.")
@@ -52,7 +71,7 @@ def cmd_check(args):
 
 
 def cmd_run(args):
-    phases = load_design(args.design)
+    _, phases = load_design(args.design)
     problems = validate(phases)
     if problems:
         sys.exit("Fix the design first (run 'styre check'):\n  " + "\n  ".join(problems))
@@ -81,6 +100,12 @@ def cmd_summarize(args):
     print(summarize(run))
     print(f"[styre] written to {run.root / 'summary.md'}")
     return 0
+
+
+def cmd_watch(args):
+    """Serve the read-only view. It writes nothing, so there is no --dry-run and no
+    confirmation: the only thing it can do is show you the files that are already there."""
+    return serve(port=args.port)
 
 
 def build_parser():
@@ -130,6 +155,12 @@ def build_parser():
     summary.add_argument("run", nargs="?", default=None, metavar="RUN",
                          help="a run id or directory (default: the latest run)")
     summary.set_defaults(func=cmd_summarize)
+
+    watch = sub.add_parser("watch", help="serve a read-only web view of this repo's runs on "
+                                         "localhost, refreshing while a phase runs")
+    watch.add_argument("--port", type=int, default=DEFAULT_PORT, metavar="PORT",
+                       help=f"port to listen on (default {DEFAULT_PORT})")
+    watch.set_defaults(func=cmd_watch)
     return ap
 
 

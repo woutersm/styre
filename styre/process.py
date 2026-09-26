@@ -19,6 +19,8 @@ import threading
 import time
 from datetime import datetime
 
+from styre.config import PI_CONFIG_DIR
+
 GREY, RESET = ("\033[90m", "\033[0m") if sys.stdout.isatty() and not os.environ.get("NO_COLOR") else ("", "")
 
 INDENT = " " * len("[+00:00] ")  # continuation lines line up under the elapsed stamp
@@ -159,9 +161,12 @@ def stream_pi(cmd, timeout=None, log=None, events=None, quiet=False):
             lg.close()
         return rc
 
+    # Every pi process gets styre's own config directory, never the operator's shell
+    # environment — see PI_CONFIG_DIR. Gate commands and git keep the inherited env.
+    env = {**os.environ, "PI_CODING_AGENT_DIR": str(PI_CONFIG_DIR)}
     try:
         p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-                             encoding="utf-8", errors="replace", bufsize=1, **_NEW_GROUP)
+                             encoding="utf-8", errors="replace", bufsize=1, env=env, **_NEW_GROUP)
     except FileNotFoundError as e:
         emit(f"[styre] command not found: {e}")
         return finish(127)

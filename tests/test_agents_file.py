@@ -36,3 +36,17 @@ def test_refresh_is_idempotent(tmp_path):
     first = p.read_text(encoding="utf-8")
     write_agents_file(p)
     assert p.read_text(encoding="utf-8") == first == AGENTS_BODY
+
+
+def test_the_block_tells_the_agent_to_read_narrowly():
+    """Tool results are the largest thing in a phase's context — 32-45% of a measured one —
+    and throughput falls as context grows, so how the agent reads is a speed rule, not
+    housekeeping."""
+    assert "Read narrowly" in AGENTS_BODY
+    assert "grep" in AGENTS_BODY
+
+
+def test_the_block_says_to_append_to_the_decision_log_without_reading_it():
+    """It is append-only and addressed to nobody in the run. Reading it was the single
+    largest tool result of a measured run, ~14,000 tokens in one call, and it only grows."""
+    assert "without reading it" in AGENTS_BODY

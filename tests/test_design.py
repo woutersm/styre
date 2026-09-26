@@ -1,6 +1,15 @@
 from pathlib import Path
 
-from styre.design import describe, parse_phases, phase_context, preamble, validate
+from styre.design import (
+    advisories,
+    describe,
+    doc_references,
+    parse_phases,
+    phase_context,
+    preamble,
+    skip_requests,
+    validate,
+)
 
 EXAMPLE = Path(__file__).resolve().parent.parent / "example-design.md"
 
@@ -65,3 +74,84 @@ def test_phase_context_carries_the_preamble_its_phase_and_an_index():
     assert "- Phase 1: X\n- Phase 2: Y  <- yours" in text   # index, with this phase marked
     assert "## Phase 2: Y\n\nbuild y" in text               # its own section, in full
     assert "build x" not in text                            # not the other phases' bodies
+
+
+GATE = "\n\n### Exit criteria\n- a\n\n### Gate\n```\ntrue\n```\n"
+
+
+def design(preamble="", body="Body.", criteria=1):
+    crit = "".join(f"- criterion {i}\n" for i in range(criteria))
+    return (f"{preamble}\n\n## Phase 1: X\n{body}\n\n### Exit criteria\n{crit}\n"
+            "### Gate\n```\ntrue\n```\n")
+
+
+def test_a_preamble_that_says_read_a_document_is_flagged():
+    """The line that cost two days: one 2.3 KB phase became a 44 KB context, the model
+    returned nothing, and styre reported "no state file written"."""
+    text = design('**"The design" means `docs/agent-design.md`.** Read it first.')
+    assert doc_references(preamble(text)) == ["docs/agent-design.md"]
+    notes = advisories(text, parse_phases(text), [1000])
+    assert any("docs/agent-design.md" in n and "unbounded prompt" in n for n in notes)
+
+
+def test_naming_a_document_without_telling_the_agent_to_read_it_is_fine():
+    """Designs cross-reference other plans constantly. Only a reading instruction counts —
+    without this the check reported 7 documents on a real design where 1 mattered."""
+    text = design("This plan runs before `event-sources-todo.md`. Its Phase 8 adds two.")
+    assert doc_references(preamble(text)) == []
+
+
+def test_a_design_that_forbids_the_read_is_not_warned_about_it():
+    """Warning about the fix would teach the reader to ignore the warning."""
+    text = design("**Do not open anything in `docs/`** — not `agent-design.md`.")
+    assert doc_references(preamble(text)) == []
+
+
+def test_the_designs_own_filename_and_the_contract_files_are_not_flagged():
+    text = design("Read `plan.md` and append to `docs/decisions.md`; see `AGENTS.md`.")
+    assert doc_references(preamble(text), design_path="docs/plan.md") == []
+
+
+def test_an_outsized_phase_is_flagged_by_prompt_size_or_criteria_count():
+    text = design(criteria=9)
+    phases = parse_phases(text)
+    assert any("9 exit criteria" in n for n in advisories(text, phases, [1000]))
+    # and by size against its neighbours
+    two = parse_phases(design(criteria=1) + "\n## Phase 2: Y\nb\n\n### Exit criteria\n- a\n\n"
+                       "### Gate\n```\ntrue\n```\n")
+    notes = advisories("x", two, [1000, 9000])
+    assert any("Phase 2 is large" in n and "9.0x the median" in n for n in notes)
+
+
+def test_a_phase_that_asks_for_a_skipped_test_is_flagged():
+    """The real collision, app phase 12 on 2026-09-23: the design said to skip on
+    non-macOS, the agent did, and the test guard rejected the phase for it."""
+    text = design(body="`app-launchd.sh --dry-run` exits 0; skip on non-macOS as\n"
+                       "`tests/test_scripts.py` already does.")
+    assert "skip on non-macOS" in skip_requests(parse_phases(text)[0].body)
+    notes = advisories(text, parse_phases(text), [1000])
+    assert any("Phase 1 asks for a skipped test" in n and "test guard rejects" in n
+               for n in notes)
+
+
+def test_a_design_that_forbids_skipping_is_not_warned_about_it():
+    """Same rule as the reading-verb negation: warning about the design agreeing with the
+    guard would teach the reader to ignore the warning."""
+    assert skip_requests("Never skip on any platform: the whole suite runs.") is None
+
+
+def test_skip_outside_a_test_context_is_not_a_skipped_test():
+    """A directive still has to be about tests."""
+    assert skip_requests("The poller will skip on a retryable error and try again.") is None
+
+
+def test_a_subject_that_skips_is_not_a_skipped_test():
+    """Measured on app's phase 5, which the loose version flagged: "skipping" here is the
+    behaviour under test, and a warning that cries wolf is one the reader learns to skim."""
+    assert skip_requests("31 January → 28 February. This is the regression test for "
+                         "`rrule`'s skipping behaviour.") is None
+
+
+def test_a_clean_design_gets_no_advisories():
+    text = design("A short preamble every phase needs.")
+    assert advisories(text, parse_phases(text), [1000]) == []

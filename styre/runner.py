@@ -14,7 +14,7 @@ from pathlib import Path
 
 from styre import __version__
 from styre.agents import write_agents_file
-from styre.config import AGENTS, DECISIONS, PI, WORK, RunOptions
+from styre.config import AGENTS, DECISIONS, PI, PI_CONFIG_DIR, WORK, RunOptions
 from styre.design import parse_phases, phase_context
 from styre.gitops import (
     add_excludes,
@@ -36,7 +36,7 @@ from styre.prompts import build_prompt, fix_prompt, template_hash
 from styre.review import describe_review
 from styre.rundir import RunDir, clear_inbox, collect, latest_run, new_run, open_run
 from styre.state import read_state, state_problem
-from styre.summarize import read_jsonl, summarize
+from styre.summarize import final_usage, read_jsonl, summarize
 from styre.timeline import Timeline
 from styre.touch import touch
 
@@ -110,6 +110,16 @@ def preflight(design_path, opts):
     """
     if not shutil.which(PI[0]):
         raise PreflightError(f"'{PI[0]}' not found on PATH.")
+    if not (PI_CONFIG_DIR / "models.json").is_file():
+        raise PreflightError(
+            f"No pi config for styre at {PI_CONFIG_DIR}.\n"
+            "An unattended run uses its own pi configuration rather than your interactive "
+            "one, so a phase never carries packages, tools or writing-style instructions it "
+            "has no use for. Create it:\n"
+            f"  mkdir -p {PI_CONFIG_DIR}\n"
+            f"  cp ~/.config/pi/agent/models.json ~/.config/pi/agent/auth.json {PI_CONFIG_DIR}/\n"
+            f"  echo '{{}}' > {PI_CONFIG_DIR}/settings.json\n"
+            "Leave packages out of that settings.json, and put no AGENTS.md beside it.")
     if not in_repo():
         raise PreflightError("Run this from inside a git repository.")
 
@@ -147,6 +157,20 @@ def preflight(design_path, opts):
     run = open_run_dir(opts)
     print(f"[styre] branch {branch}, run {run.id} ({run.root})", flush=True)
     return run
+
+
+def empty_response(events):
+    """True when pi's last message came back with nothing at all: no input, no output.
+
+    This is not the agent failing to follow its contract, it is the provider refusing or
+    dropping the request, and the two look identical from here — pi ends the turn and exits
+    0 either way. Measured on 2026-09-22: the model host rejected a prefill for memory
+    ("predicted peak would exceed prefill safety cap 37.8GB") and returned an empty stream.
+    styre reported "no state file written", which sent a human reading the agent's contract
+    for two days when the answer was in the model server's log on another machine.
+    """
+    usage = final_usage(events)
+    return bool(usage) and not any(usage.get(k) for k in ("input", "output", "totalTokens"))
 
 
 def run_phase(ctx, n):
@@ -193,6 +217,10 @@ def run_phase(ctx, n):
         problem = state_problem(state)
         if problem:
             why = problem
+            if empty_response(events):
+                why = ("the model returned an empty response (0 tokens in and out) — the "
+                       "provider refused or dropped the request, so check the model host's "
+                       f"log, not the agent. It then wrote nothing: {problem}")
             break
         failure = verify(phase, log, gate_timeout=opts.gate_timeout,
                          allow_test_changes=opts.allow_test_changes, timeline=tl,
@@ -258,6 +286,7 @@ def orchestrate(design_path, opts, run):
     tl.event("run_start", run=run.id, styre=__version__, design=str(design_path),
              design_sha256=hashlib.sha256(ctx.text.encode("utf-8")).hexdigest()[:16],
              templates=template_hash(), pi_version=pi_version(), branch=current_branch(),
+             pi_config=str(PI_CONFIG_DIR),
              phases=len(ctx.phases), from_phase=opts.from_phase, retries=opts.retries)
 
     # The initial review: what already exists in the repo that each phase's prose names,

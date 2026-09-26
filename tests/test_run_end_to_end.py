@@ -108,6 +108,17 @@ def test_a_phase_that_changes_nothing_is_not_committed(styre, repo, commits):
     assert commits()[0] == "Phase 1: First phase"
 
 
+def test_an_empty_model_response_says_so_instead_of_blaming_the_agent(styre, repo, commits):
+    """A provider that refuses the request and pi's agent ignoring its contract look
+    identical from here: pi exits 0 and writes nothing either way. The zero-token usage
+    block is what tells them apart, and it took two days to find without this message."""
+    r = styre("run", "design.md", "--quiet", "--retries", "0", default="empty")
+    assert r.returncode == 1
+    assert "the model returned an empty response (0 tokens in and out)" in r.stdout
+    assert "check the model host's log" in r.stdout
+    assert commits() == ["initial"]
+
+
 def test_a_crashing_agent_stops_the_run(styre, repo, commits):
     r = styre("run", "design.md", "--quiet", default="crash")
     assert r.returncode == 1
@@ -295,6 +306,28 @@ def test_summarize_without_any_run_says_so(styre, repo, commits):
     assert r.returncode == 1 and "No runs found" in r.stderr
     r = styre("summarize", "20990101-000000")
     assert r.returncode == 1 and "No such run" in r.stderr
+
+
+def test_a_missing_pi_config_stops_the_run_with_instructions(styre, repo, commits, tmp_path):
+    """An unattended run uses styre's own pi config, never the operator's interactive one:
+    measured 2026-09-23, the interactive setup put 22,439 chars of web-search tool schemas
+    and writing-style rules into every request — 47% of a phase's starting context."""
+    r = styre("run", "design.md", "--quiet",
+              env_extra={"STYRE_PI_CONFIG_DIR": str(tmp_path / "nope")})
+    assert r.returncode == 1
+    assert "No pi config for styre at" in r.stderr
+    assert "mkdir -p" in r.stderr and "put no AGENTS.md beside it" in r.stderr
+    assert commits() == ["initial"]
+
+
+def test_pi_runs_under_styres_own_config_dir(styre, repo, commits, pi_config):
+    """pi gets styre's config directory, and the run records which one it used."""
+    styre("run", "design.md", "--quiet")
+    start = next(e for e in timeline(repo) if e["event"] == "run_start")
+    assert start["pi_config"] == str(pi_config)
+    # fake_pi writes the value it was given, so this is what the child actually saw.
+    seen = (run_dir(repo) / "phase1.piconfig").read_text(encoding="utf-8").strip()
+    assert seen == str(pi_config)
 
 
 def test_pi_missing_from_path_fails_before_anything_runs(styre, repo, commits):

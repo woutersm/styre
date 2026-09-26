@@ -54,6 +54,17 @@ def read_events(path):
             yield event
 
 
+def final_usage(path):
+    """The usage block of the last `message_end` in a phase's events file, or None."""
+    last = None
+    for e in read_events(path):
+        if e.get("type") == "message_end":
+            usage = (e.get("message") or {}).get("usage")
+            if isinstance(usage, dict):
+                last = usage
+    return last
+
+
 def parse_ts(text):
     try:
         return datetime.fromisoformat(text)
@@ -65,25 +76,36 @@ def parse_ts(text):
 class Usage:
     """Token usage for one phase.
 
-    `input` is the *last* value seen and `output` a sum: pi reports input cumulatively per
-    step, and `message_update.usage` is cumulative within a step and must never be summed.
-    `reasoning` is optional — a provider that reports no thinking breakdown leaves it
-    undefined, which is not the same as zero, so None survives all the way to the printout.
+    `peak` is the high-water mark of `totalTokens`: the largest context the model was asked
+    to hold. It is the number that predicts a phase — measured across twelve phases of one
+    real design, wall time ran at about a minute per 1,000 tokens of peak context, and the
+    two phases that exceeded 85k were the slowest and the one that timed out. It is also
+    what the model host runs out of memory over, long before the advertised window.
 
-    `cache_read` is summed rather than taken last, because it is read as a ratio against
-    input: prompt caching is live on this provider, and on a measured phase 403k of the
-    453k tokens the model saw were cache hits on the stable prompt prefix. A collapse in
-    that ratio is the signal that a phase's prefix stopped being stable.
+    It replaced an `input` column that reported the *last* `input` value. That was wrong:
+    `input` is per-step uncached prefill on this provider, not a cumulative total, so the
+    last value is one step's tail (1,149 on a phase whose context reached 44,766) and
+    neither a sum nor a maximum of anything. `totalTokens` is the measured quantity.
+
+    `output` is summed; `message_update.usage` is cumulative within a step and must never
+    be summed, which is why only `message_end` is read. `reasoning` is optional — a
+    provider that reports no thinking breakdown leaves it undefined, which is not the same
+    as zero, so None survives all the way to the printout.
+
+    `cache_read` is summed rather than taken last, because it is read as a ratio: prompt
+    caching is live on this provider, and on a measured phase 403k of the 453k tokens the
+    model saw were cache hits on the stable prompt prefix. A collapse in that ratio is the
+    signal that a phase's prefix stopped being stable.
     """
 
-    input: int = 0
+    peak: int | None = None
     output: int = 0
     reasoning: int | None = None
     cache_read: int = 0
 
     def add(self, usage):
-        if usage.get("input") is not None:
-            self.input = usage["input"]          # last, not summed
+        if usage.get("totalTokens") is not None:
+            self.peak = max(self.peak or 0, usage["totalTokens"])   # high-water, not a sum
         self.output += usage.get("output") or 0
         self.cache_read += usage.get("cacheRead") or 0   # summed: a hit rate, not a total
         if usage.get("reasoning") is not None:
@@ -315,12 +337,13 @@ def phase_table(summary):
                      minutes(p.gate_seconds, p.gate_runs),
                      "-" if p.rounds is None else p.rounds,
                      "-" if p.self_rounds is None else p.self_rounds,
-                     count(p.usage.input), count(p.usage.output),
+                     count(p.usage.peak), count(p.usage.output),
                      count(p.usage.reasoning), count(p.usage.cache_read)])
     total = Usage()
     for p in summary.phases:
         total.output += p.usage.output
-        total.input += p.usage.input
+        if p.usage.peak is not None:                 # the run's peak is a max, never a sum
+            total.peak = max(total.peak or 0, p.usage.peak)
         total.cache_read += p.usage.cache_read
         if p.usage.reasoning is not None:
             total.reasoning = (total.reasoning or 0) + p.usage.reasoning
@@ -331,17 +354,19 @@ def phase_table(summary):
                          any(p.gate_runs for p in summary.phases)),
                  sum(p.rounds or 0 for p in summary.phases),
                  sum(p.self_rounds or 0 for p in summary.phases),
-                 count(total.input), count(total.output), count(total.reasoning),
+                 count(total.peak), count(total.output), count(total.reasoning),
                  count(total.cache_read)])
     return ["## Phases", "",
             table(["#", "Phase", "Status", "Commit", "Agent min", "Gate min", "Fix", "Self",
-                   "Input", "Output", "Thinking", "Cached"], rows),
+                   "Peak ctx", "Output", "Thinking", "Cached"], rows),
             "",
-            "Input is the last value pi reported, not a sum: it is cumulative per step. "
-            "Thinking is the part of output the provider attributed to reasoning; `n/a` "
-            "means it reported no breakdown, which is not the same as none. Cached is the "
-            "sum of prompt-cache hits: large is good, and it collapsing means the prompt "
-            "prefix stopped being stable."]
+            "Peak ctx is the largest context the model held during the phase, and the "
+            "total row is the largest of those, not a sum. It is what a phase costs: "
+            "roughly a minute per 1,000 tokens, and what the model host runs out of memory "
+            "over. Thinking is the part of output the provider attributed to reasoning; "
+            "`n/a` means it reported no breakdown, which is not the same as none. Cached "
+            "is the sum of prompt-cache hits: large is good, and it collapsing means the "
+            "prompt prefix stopped being stable."]
 
 
 def where_to_look(summary):

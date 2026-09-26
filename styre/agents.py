@@ -48,6 +48,14 @@ spend a fix round on it.
   branch. The orchestrator owns the git history.
 - Read what earlier phases wrote in the working tree rather than a description of it. The
   notes you are handed deliberately do not inventory the repository.
+- **Read narrowly.** A file you read whole stays in your context for the rest of the phase,
+  and tool results are the largest thing in it — 32-45% of a measured phase, with single
+  reads of 5,000-6,000 tokens. Use `grep` to find the lines you need and read a range around
+  them; read a file end to end only when you are about to rewrite it end to end. The same
+  goes for a command's output: pipe it through `head`, `tail` or `grep` rather than printing
+  a whole test log back into the conversation. Throughput falls as your context grows — the
+  same phase decodes at 10 tokens a second early and 6 late — so this is your own speed you
+  are spending, not just the machine's memory.
 - **Never read anything under `.styre/`.** It is the orchestrator's working directory, not
   yours: run logs, timelines, prompts and other phases' files. Nothing in it helps you build
   this phase, and reading it spends the context you need for the work. Write exactly the two
@@ -65,6 +73,11 @@ spend a fix round on it.
 `{DECISIONS}` is for choices a reader could not infer from the code: ambiguities you
 resolved, options you rejected and why, constraints you discovered. Not a list of the files
 you created — the repository already shows that.
+
+**Append to it without reading it.** It is append-only and nothing in it is addressed to
+you, so open it only to add your section at the end — never to read what earlier phases
+wrote. On a measured run, reading this file was the single largest tool result of the whole
+run, ~14,000 tokens in one call, and it grows with every phase that has ever appended.
 
 **No later phase reads it.** It is committed for a person going through this months from
 now, so write the two or three things that would save them an hour, and nothing else. A

@@ -18,8 +18,8 @@ committed on a red gate.
 | File | What it is |
 | --- | --- |
 | `styre/cli.py` | Argument parsing, the `check`, `run` and `summarize` subcommands. The `styre` console script points here. |
-| `styre/config.py` | Constants (`PI`, `CLAUDE`, `WORK`, `DECISIONS`, `AGENTS`, `EXCLUDES`) and the `RunOptions` bundle. |
-| `styre/design.py` | Parsing a design into `Phase` objects; `preamble()` and `phase_context()`; `validate()`; the `check` rendering. |
+| `styre/config.py` | Constants (`PI`, `PI_CONFIG_DIR`, `CLAUDE`, `WORK`, `DECISIONS`, `AGENTS`, `EXCLUDES`) and the `RunOptions` bundle. |
+| `styre/design.py` | Parsing a design into `Phase` objects; `preamble()` and `phase_context()`; `validate()` (errors) and `advisories()` / `doc_references()` (warnings); the `check` rendering. |
 | `styre/review.py` | `find_references()` / `describe_review()`: the second half of `check`, and what `run` calls automatically before phase 1 and after every commit. For every backtick-quoted identifier a phase names, greps the target repo's test-shaped files for existing references — the mechanical half of catching a phase that collides with a frozen test fixture, before a run starts rather than after a timeout. A name with more than `MAX_HITS` hits is dropped as a local variable or a library, not a collision. |
 | `styre/touch.py` | Claude as the escape hatch — see "The supervising layer". `run_claude()`, `touch_prompt()`, `touch()`: one turn at a stuck phase. Invoked only by `runner.py`'s `_escalate()`, only when `--claude-touch` is passed. |
 | `styre/prompts.py` | `build_prompt()` and `fix_prompt()`. |
@@ -30,12 +30,14 @@ committed on a red gate.
 | `styre/rundir.py` | The per-run directory `.styre/runs/<id>/`: its paths, `latest.txt`, and collecting the agent's two files into it. |
 | `styre/state.py` | Reading and judging `phaseN.state.json`. |
 | `styre/summarize.py` | Reading a finished run back off disk: the `summarize` subcommand, and the report every `run` prints as it ends. Calls no model. |
+| `styre/watch.py` | `styre watch`: a read-only web view of this repo's runs on localhost. The run list reads only each timeline; a run page scans that run's events on demand; the live panel reads forward from a byte offset so a 2-second refresh is free. Writes nothing, serves nothing off this machine. |
 | `styre/timeline.py` | `Timeline`: the append-and-flush writer behind `<run>/timeline.jsonl`. |
 | `styre/runner.py` | `preflight()`, the `Ctx` bundle the loop is threaded with, the phase loop (`run_phase`, `orchestrate`), and `_escalate()` — the Claude-touch bounding. |
 | `orchestrate.py` | Deprecated shim mapping the old single-command form onto the subcommands. |
 | `pyproject.toml` | Packaging and the `styre` entry point; ruff and pytest config. No runtime dependencies. |
 | `example-design.md` | Two-phase example design (a `wordfreq` CLI; uv, pytest, ruff) for testing. |
-| `TODO.md` | Tracked next steps: a pi preflight and an optional pi-written narrative, plus the record of the 2026-09-22 simplification pass. |
+| `writing-designs.md` | How to shape a design *before* a run: sizing a phase by its work, cutting phases where each gate stays green, where the ripple goes, and reading a stop back into a design change. Every rule names the run that taught it. For the human writing the design — never named in a design, or `advisories()` flags it. |
+| `TODO.md` | What is left, what is a known limitation, and what is parked. Rewritten 2026-09-23; the reasoning lives here, not there. |
 | `tests/` | pytest suite. `fake_pi.py` and `fake_claude.py` are test doubles installed on `PATH` as `pi` and `claude`, so the whole loop — including `--claude-touch` — runs without a model. |
 | `tests/fixtures/*.jsonl` | Real captured pi JSON output: a plain reply, a run with a bash tool call, a saved session file, and `pi_usage.jsonl` with real token counts. Write every parser against these, not against assumptions. |
 
@@ -69,6 +71,11 @@ Exit criteria are plain prose for the agent. The **gate** is what the orchestrat
 Both are written by the human, in the design. A phase with no criteria list or no gate block
 is a hard error.
 
+That is the format. **`writing-designs.md` is the shape** — how big a phase may be, where to
+cut one so its gate is green on its own work, and why the rename-everything phase goes last.
+Read it before writing or splitting a design; the failures it describes are ones that only
+show up hours into a night.
+
 ## What happens per phase
 
 0. Before phase 1, write the styre block into the target repo's `AGENTS.md` (`AGENTS_BODY` /
@@ -96,7 +103,14 @@ is a hard error.
    grey and, as it happens, to `<run>/logs/phaseN.log`. Keep that split: the log is for reading
    (a few KB), the events file is for parsing (a few hundred KB per phase). Putting raw JSON in
    the log once made it 180 KB with the gate output buried at line 404.
-3. The agent ends by writing three files: `docs/decisions.md` (append-only, committed),
+3. If pi's last message comes back with an all-zero usage block, the phase stops with
+   **"the model returned an empty response"** rather than with whatever the agent failed to
+   write. A provider that refuses a request and an agent that ignores its contract look
+   identical from here — pi ends the turn and exits 0 either way — and on 2026-09-22 that
+   ambiguity cost two days: the model host was rejecting the prefill for memory
+   (`predicted peak would exceed prefill safety cap 37.8GB`) while styre reported "no state
+   file written". See `runner.empty_response()`.
+4. The agent ends by writing three files: `docs/decisions.md` (append-only, committed),
    `.styre/notes-next.md` (overwritten, read only by the next phase), and
    `.styre/phaseN.state.json` (`status`, `reason`, `unmet_criteria`, `fix_rounds_self`).
    `DONE` together with a non-empty `unmet_criteria` is rejected as contradictory. Those two
@@ -104,12 +118,12 @@ is a hard error.
    into the run directory as `phaseN.state.json` and `phaseN.notes-next.md`. The agent's
    contract stays a stable path it can be told about in a committed `AGENTS.md`, which cannot
    name a run id.
-4. On `DONE`, the orchestrator runs each gate command itself (`--gate-timeout`, default 900 s),
+5. On `DONE`, the orchestrator runs each gate command itself (`--gate-timeout`, default 900 s),
    printing each one before it starts and its verdict and duration after.
-5. It then runs a test-tampering guard over the staged diff: added skip/xfail markers, or a
+6. It then runs a test-tampering guard over the staged diff: added skip/xfail markers, or a
    net removal of test functions, fail the phase. Disable with `--allow-test-changes`.
-6. Any failure is fed back to a fresh pi run as a fix prompt, up to `--retries` (default 2).
-7. All green → `git commit -m "<phase title>"`. A phase whose gate passes but which staged no
+7. Any failure is fed back to a fresh pi run as a fix prompt, up to `--retries` (default 2).
+8. All green → `git commit -m "<phase title>"`. A phase whose gate passes but which staged no
    diff is treated as a failure, not a success — no empty commits. Otherwise the run stops and
    leaves the work uncommitted; `--from-phase N` resumes.
 
@@ -118,29 +132,27 @@ is a hard error.
 Installed with `uv tool install -e .` (or `pip install -e .`); without installing, use
 `python -m styre` with the repository on `PYTHONPATH`.
 
-Install editable while this code is still changing. A non-editable `uv tool install` copies a
-built wheel, and uv caches that wheel per source path and version, so `--force` — which
-reinstalls the tool without rebuilding it — will reuse a wheel from an earlier session when the
-version has not changed. This has already cost one overnight run: on 2026-09-20 the gateway run
-went out with the pre-scoping prompt builder, 66 KB prompts carrying all fifteen phases, because
-`uv tool install --force .` reinstalled the previous evening's wheel. `styre --version` and
-`styre check` were both green on it. Verify an install by behaviour — the size and content of
-`.styre/runs/<id>/phaseN.prompt.md` — not by the command answering.
+Install editable while this code is changing. uv caches a built wheel per source path *and
+version*, so a non-editable `--force` reuses a stale wheel when the version has not moved.
+That cost one overnight run: on 2026-09-20 a run went out with the old prompt builder — 66 KB
+prompts carrying all fifteen phases — while `styre --version` and `styre check` were both
+green. **Verify an install by behaviour** (the size of `.styre/runs/<id>/phaseN.prompt.md`),
+never by the command answering.
 
-**So bump `__version__` in `styre/__init__.py` whenever behaviour changes.** The version is
-the cache key, and it is the only thing that makes `--force` actually rebuild. `pyproject.toml`
-reads it from the package (`dynamic = ["version"]`), so there is one number, not two that can
-drift. Every run records it in `run_start` and every `summary.md` prints it, which is how a
-stale install is recognisable in the morning instead of being a mystery.
+**So bump `__version__` in `styre/__init__.py` whenever behaviour changes.** It is the cache
+key and the only thing that makes `--force` rebuild. `pyproject.toml` reads it from the
+package, so there is one number. Every run records it in `run_start`.
 
 ```
-styre check design.md                  # validate; print phases, criteria, gates; then
-                                       #   find existing test-file references its prose names
+styre check design.md                  # validate; print phases, gates and prompt sizes;
+                                       #   warn about risky shapes; then find existing
+                                       #   test-file references its prose names
 styre run design.md                    # run every phase
 styre run design.md --from-phase 2     # resume after a stop, in the latest run directory
 styre run design.md --from-phase 2 --run-id 20260920-2330   # ... in a specific one
 styre summarize                        # what happened in the last run
 styre summarize 20260920-233014        # ... or a named one, by id or by path
+styre watch                            # read-only web view on localhost, live
 ```
 
 Other flags on `run`: `--quiet` (no live echo to the terminal; the log is still written
@@ -149,8 +161,8 @@ live), `--retries`, `--timeout`, `--gate-timeout`,
 `--reset-branch`, `--run-id`, `--claude-touch` (see "The supervising layer" — off by
 default, real automatic spend against the `claude` CLI when it is on).
 
-`orchestrate.py` still works and translates the old form onto the subcommands, with a
-deprecation notice on stderr.
+`orchestrate.py` still works, translating the old single-command form onto the subcommands
+with a deprecation notice on stderr.
 
 ## Preflight
 
@@ -160,6 +172,80 @@ branch is checked out, never reset — resetting it would throw away phases an e
 committed. Re-running phase 1 over a branch that already holds phase commits warns;
 `--reset-branch` is the explicit, destructive opt-in. Orchestrator artifacts and caches are
 appended to the exclude file located via `git rev-parse --git-path info/exclude`.
+
+## pi runs under styre's own config, not yours
+
+Every pi process is launched with `PI_CODING_AGENT_DIR=~/.config/pi/styre`
+(`config.PI_CONFIG_DIR`), and preflight refuses to start if that directory has no
+`models.json`. Gate commands and git keep the inherited environment; only pi is redirected.
+
+This was measured, not assumed. On 2026-09-23 the *starting* context of a phase was 13,109
+tokens, and only 32% of it was styre's:
+
+| | chars | ~tokens |
+| --- | --- | --- |
+| `pi-web-access` tool schemas (`web_search`, `fetch_content`, `source_check`, `get_search_content`) | 11,551 | 3,160 |
+| the operator's global `AGENTS.md` (writing style, "reader has ADHD") | 10,888 | 2,980 |
+| styre's phase prompt | 11,316 | 3,090 |
+| styre's `AGENTS.md` | 4,007 | 1,100 |
+| pi's own tools and rules | 8,500 | 2,320 |
+
+Web-search schemas, in a run whose design says "no test touches the network"; prose-styling
+rules, for output no human reads. A trivial prompt cost **8,331 tokens** of fixed overhead
+under that config and **1,639** under a lean one — 80% off *every request of every turn*,
+which is also KV that no longer has to fit on the model host.
+
+There is a second reason, already recorded under "Where the model runs": `PI_CODING_AGENT_DIR`
+is exported from `~/.zshrc`, so a run started from cron or launchd fell back to the dead
+pre-16-September `~/.pi/agent` tree. Setting it explicitly closes that too.
+
+Keep the directory lean — `models.json`, `auth.json`, a `settings.json` carrying nothing an
+unattended run does not use, and **no `AGENTS.md`**. The repo's own `AGENTS.md` still reaches
+the agent; it is a project file, found by pi in the working directory, not part of this config.
+
+**`pi-web-access` is now in `packages`, deliberately, and it is the one exception** (added
+2026-09-26 for app's TanStack design). The rule above said *no* packages because 3,160 tokens
+of web-search schemas in a run whose design says "no test touches the network" is pure waste.
+That reasoning holds and is not repealed; what changed is that a design arrived whose framework
+the local model does not know and cannot be told in a prompt — so the documentation has to be
+fetchable, and the four tools (`web_search`, `fetch_content`, `get_search_content`,
+`source_check`) come as one package.
+
+Measured on the same trivial prompt, before and after, under this config: **1,627 → 5,065
+input tokens**, so it costs **+3,438 tokens of every request of every turn**. Against a ~40k
+phase that is 8%, and it is KV that has to fit on the model host (see "The host runs out of
+memory long before it runs out of context"). It is not free and it is not per-design: every
+run under this config now pays it. If a design has no reason to reach the network, take the
+package back out — and a design that does reach it must bound the fetching in its own prose,
+because a fetched page lands in the phase's context and stays there.
+
+`web-search.json` is copied in beside it with `autoOpenBrowser: false`: nothing unattended
+should be able to open a browser. No search-provider key is configured, so `fetch_content` on
+a known URL is the capability being bought here; search is whatever the package's keyless
+fallbacks manage.
+
+**`contextWindow` and `maxTokens` are set to what the host can do, not what the model
+claims** (2026-09-25). The model advertises a 262,144-token window; this host refused a
+prefill at `kv_len=129344`, so the config said twice the truth and nothing in the stack knew
+there was a wall until it hit one. `contextWindow` is 120000. `maxTokens` was 32768 against
+a measured maximum output of **8,249 tokens over 257 messages** (p99 7,607, p90 2,411), so
+it is 12288 — 1.5x the worst case ever seen rather than 4x. Neither number is a limit pi
+enforces by compacting (0.87.0 has no such flag; `--help` offers only `--no-context-files`),
+so treat both as honesty rather than as a mechanism.
+
+**The thinking budget is not the lever it looks like.** `thinkingBudgets.medium` is 8,192 and
+only **1 of 259** thinking blocks in a measured run exceeded it; the median block is 339
+characters. Thinking is outlier-dominated — ~40k of one phase's 54k output tokens — so
+cutting the budget would buy real time, but it clips the hard steps, and there is no evidence
+here that the cap is what is costing anything.
+
+**`preserve_thinking: false` is now validated** (2026-09-25). It was set on 2026-09-23 at the
+worst possible moment — six clean commits banked — and this file said to revert it if a phase
+looped or `fix_rounds_self` jumped. Six further phases have committed since with
+`fix_rounds_self` of 1, 2, 3, 1, 1 and no loop. The warning is closed.
+
+`$STYRE_PI_CONFIG_DIR` overrides the path so the test suite can use a temporary directory.
+It is not a user-facing knob and `run` has no flag for it.
 
 ## Watching a run
 
@@ -196,6 +282,58 @@ What reaches a human while a phase is running, and why each piece is there:
 `<run>/logs/phaseN.log` gets the same rendering **as it happens**, so `tail -f` on it follows
 a phase in flight. It used to be assembled in memory and written when pi exited, which meant
 the one human-readable file was the one you could not watch.
+
+### `styre watch`, when the terminal is not where you are
+
+`styre watch` serves the same facts as a page on `http://127.0.0.1:8765/`, read-only, from
+the run directories of the repo it is run in. It answers the one question the terminal does
+not: *is the phase running now going to make it.*
+
+Three reads with three different costs, which is the whole design:
+
+| View | Reads | Costs |
+| --- | --- | --- |
+| the run list | `timeline.jsonl` only, ~4 KB a run | 3 ms on app's three runs |
+| one run | that run's `logs/phaseN.events.jsonl`, on demand | 0.8 s over 41 MB |
+| the live panel | forward from a byte offset (`_Tail`), appended bytes only | ~1 ms a poll, at 2 s intervals |
+
+**tok/s is measured over model time, not wall time.** Each message's own `message_start` →
+`message_end` span, summed, against the output tokens of those messages: tool calls and the
+waits between messages are excluded. Measured that way it agrees with what the model host
+reports for itself (8.58 against the server log's 8.4-8.9 on app's phase 5, 2026-09-25),
+because the span covers prefill and decode together, which is how the server computes its
+own figure too. The obvious alternative — output over the phase's wall clock — is a
+different number and an unusable one: it reads **0.60 tok/s** on a phase whose events file
+spans a failed attempt, a six-hour gap, and the resume that succeeded.
+
+Across app's reminders run it makes the decay in CLAUDE.md's own throughput note visible
+per phase: 48k ctx → 10.1 tok/s, 51k → 9.3, 72k → 8.6, 77k → 8.0, 86k → 7.6, 96k → 6.2.
+
+The live numbers are phase and step, elapsed, **peak context**, context per minute, **tok/s**, and
+**seconds since the last output** — the last one because the idle watchdog does not fire
+until `--timeout`, hours later, while a human wants to know at five minutes. Each phase gets
+an inline-SVG sparkline of context over time; no chart library, no CDN, nothing fetched.
+
+⚠️ **A missing `run_end` is not a heartbeat.** The run list's first version called every
+run with an unclosed invocation "running", and app's `20260921-045131` holds **17
+`run_start`s against 5 `run_end`s** — twelve invocations killed at the terminal — so every
+dead run read as live. A kill and a run in progress write the timeline identically; what
+separates them is whether anything in the directory has been written lately. So the states
+are: **running**, **running, silent Nm** past 5 minutes, and **abandoned** once the run has
+been quiet longer than `DEFAULT_TIMEOUT` — styre's own idle limit, since `run` would itself
+have killed the phase and written an ending by then. The middle state is deliberately not
+called dead: pi prints nothing between `tool_execution_start` and `tool_execution_end`, so
+a phase inside a long test suite looks exactly like a stalled one from out here.
+
+The sparkline's danger line is **calibrated from this repo's own history** — the lowest peak
+context at which a phase here has ever stopped — not from a constant. 85k and 130,901 are
+facts about one model host, and a monitor that hardcodes them is wrong on the next one. A
+repo where nothing has died yet gets no line, which is the honest answer.
+
+It is **read-only and bound to 127.0.0.1**, deliberately both: the pages carry phase
+prompts, diffs and decisions, and a monitor that can break the run it watches is worse than
+no monitor. There is no route that changes anything, so there is nothing to confirm and no
+auth to get wrong.
 
 ### The timeout is idle, not a deadline
 
@@ -249,7 +387,7 @@ kill. Every line carries `ts` and `event`.
 
 | Event | Fields |
 | --- | --- |
-| `run_start` | `run`, `styre`, `design`, `design_sha256`, `templates`, `pi_version`, `branch`, `phases`, `from_phase`, `retries` |
+| `run_start` | `run`, `styre`, `design`, `design_sha256`, `templates`, `pi_version`, `pi_config`, `branch`, `phases`, `from_phase`, `retries` |
 | `pi_start` / `pi_end` | `phase`, `step` (`builder` or `fix N`), and on end `seconds`, `rc` |
 | `gate_start` / `gate_end` | `command`, and on end `seconds`, `rc` |
 | `guard_result` | `ok`, `problem` |
@@ -302,9 +440,15 @@ Things worth keeping right:
 
 - **`-` is not `0.0`.** A dash means nothing was measured; a zero means it was, and was
   quick. Same rule as `n/a` for thinking tokens — absent is not zero.
-- **Input is the last value, output is a sum.** pi reports input cumulatively per step. The
-  cumulative-usage trap one level down (`message_update.usage`) is avoided by reading only
-  `message_end`.
+- **Peak context is a maximum, output is a sum**, and the total row's peak is the largest
+  phase, never the sum of the phases. The cumulative-usage trap one level down
+  (`message_update.usage`) is avoided by reading only `message_end`.
+- ⚠️ **There was an `Input` column here and it was wrong.** It reported the *last* `input`
+  value on the belief that pi reports input cumulatively. It does not: on this provider
+  `input` is one step's **uncached prefill**, non-monotonic across every phase of a
+  12-phase run, and `totalTokens = input + cacheRead + output` exactly. So the column said
+  1,149 for a phase whose context reached 44,766. Replaced by `Peak ctx` on 2026-09-23 —
+  see "Token accounting", and do not restore an input column without re-measuring first.
 - **"Where to look" includes a phase that committed cleanly** when it self-corrected and the
   orchestrator saw no fix rounds. That gap is the clearest sign of a criterion the design
   states less plainly than its gate enforces, and it is invisible in the table.
@@ -374,6 +518,11 @@ are not complexity to be trimmed. Everything else is.
   around `unmet_criteria` earn their space. Trim wording, never a rule.
 - Standing rules belong in `AGENTS.md` (pi auto-loads it, fix rounds included); only
   phase-specific material belongs in the prompt.
+- `styre watch` is read-only and localhost-only (2026-09-25). It writes nothing — not even
+  a cache — and has no kill or resume route. A stop button wants auth and a confirm, and a
+  resume button starts unattended spend from a stray click; neither is worth it to a person
+  who has a terminal open. The history view scans on demand rather than caching, so styre
+  gains no new artifact and the viewer stays a pure reader.
 - The CLI is subcommands (`styre check`, `styre run`), installed as a console script. A new
   verb is a new subcommand, not a flag on `run` — but a verb that answers the same question
   as an existing one is not a new verb: `styre review` was folded into `check` on
@@ -385,7 +534,10 @@ are not complexity to be trimmed. Everything else is.
   is one more thing for the model to get wrong.
 - The pi invocation is fixed: `pi -p --mode json`, the constant `PI`, plus `--session-dir`
   and `--name` computed per step. No `--pi-cmd`, no `--model`, no auto-appended
-  `--no-approve`. Local models only; pi's own settings pick which.
+  `--no-approve`. Local models only; pi's own settings pick which — but from **styre's**
+  pi config directory, not the operator's (2026-09-23, see "pi runs under styre's own
+  config"). An unattended run inheriting an interactive setup is how 47% of a phase's
+  context became web-search schemas and writing-style rules.
 - Never commit on a red gate.
 - Cross-platform: pathlib, no POSIX-only shell syntax inside the package. (The end-to-end
   tests' own fixture gate uses `test -f`, so they skip on Windows.)
@@ -394,10 +546,10 @@ Parked, ask before adding: hidden held-out tests, spend/time budgets, placeholde
 parallel phases, run notifications, a run-level circuit breaker on repeated Claude
 escalations (considered 2026-09-21, not needed yet).
 
-## pi reference (verified against pi 0.85.1 on 2026-09-19)
+## pi reference (verified against 0.85.1 on 2026-09-19; running 0.87.0 since 2026-09-23)
 
-pi works here; there is no auth blocker. Do not guess at pi's behavior — run it and look.
-Samples of everything below are in `tests/fixtures/`.
+Do not guess at pi's behaviour — run it and look. Samples are in `tests/fixtures/`.
+Everything below still held on 0.87.0, with two additions noted inline.
 
 Invocation:
 
@@ -417,10 +569,16 @@ Invocation:
   conversation, not the event stream, and carries none of our arrival timestamps. It is
   there so pi's own tooling can open a phase.
 - The default provider is `google`, but the configured default here resolves to a **local
-  mlxserve model** — no provider keys are set and `pi --list-models` offers only mlxserve. Usage and
-  cost report as zero, because nothing is being billed. Token counts are real — see "Token
-  accounting" below; they were zero until 2026-09-20 for a config reason, not a local-model
-  reason. See "Where the model runs": local does not mean same machine.
+  mlxserve model**. Cost reports as zero because nothing is billed; token counts are real — see
+  "Token accounting". "Where the model runs": local does not mean same machine.
+- `--thinking <level>` takes `off|minimal|low|medium|high|xhigh|max`. styre does not pass
+  it; the level and its token budget live in pi's settings — see "Where the model runs" for
+  why the budget is the knob that matters and how it reaches the server.
+- **The system message is large and is not styre's.** Its `sections` (`preamble`, `tools`,
+  `rules`, `docs`, `project_context`, `cwd`) plus `toolsAdded` came to 36,721 chars on a
+  real phase — 2.7× everything styre sent. `project_context` inlines every `AGENTS.md` pi
+  finds, including one in its own config directory. Read it out of a session file
+  (`<run>/sessions/phaseN/*.jsonl`, row 5) when a prompt is unexpectedly large.
 
 Event stream, in order: `session` (header), `agent_start`, `turn_start`, then per message
 `message_start` / `message_update`* / `message_end`, with
@@ -447,6 +605,10 @@ first, then filter thinking.
 
 Shapes worth knowing:
 
+- pi issues **parallel tool calls**: two `message_update.toolcall_start` events can arrive
+  before either executes. `render_event` assumes strict interleaving, so the live log
+  concatenates their arguments and check-marks on one line. Cosmetic; the events file is
+  correct.
 - `tool_execution_start`: `toolCallId`, `toolName`, `args`.
 - `tool_execution_end`: `toolCallId`, `toolName`, `result`, `isError`. Pair events by
   `toolCallId` to get a duration.
@@ -465,71 +627,94 @@ Shapes worth knowing:
 
 ## Prompt size
 
-Measured on the two-phase example (`~/Dev/auto2`, real pi): the phase-1 prompt is ~4.8 KB
-after the standing rules moved to `AGENTS.md`, of which ~3.1 KB is the design itself. Per
-later phase it grows by ~1.25 KB of accumulated decisions, plus the previous phase's notes
-(~1.2 KB, which does not compound).
+Everything in a phase's context costs KV on the model host for the whole phase, so the rule
+is one line: **a phase prompt carries what that phase needs and nothing else.** Three things
+were found violating it, each measured on `app` in September 2026.
 
-**The decisions log is not in the prompt at all.** `docs/decisions.md` is still written by
-every phase and still committed — it is a good human artifact — but no prompt carries it.
+| what was in the prompt | why it went |
+| --- | --- |
+| `docs/decisions.md`, 29.6 KB | ungated agent self-report, forwarded to the next agent as fact |
+| a preamble line, *"read `docs/agent-design.md` first"* | turned a 2.3 KB phase into a 44 KB context |
+| pi's own packages and global `AGENTS.md`, 22.4 KB | see "pi runs under styre's own config" |
 
-It went in stages on 2026-09-22, and the stages are worth keeping because the second only
-became visible once the first was done. First it was *scoped*: the log is per project, so a
-repo that has already run one design accumulates that design's sections too, and on `app`
-that was 29.6 KB shipped into every prompt, of which 2.6 KB belonged to the design actually
-running. Then, reading the 2.6 KB that survived: four of its seven bullets restated what
-the tree already showed (dependency versions in `pyproject.toml`, three type fixes in the
-source, two test files described), one was status the gate had already proved ("245 passing
-under three randomised orders"), and none of the seven was about the phase that would read
-it. The scoping function was deleted with the block; a scoper with no caller is dead code.
+Phase 3's whole context went **22,500 → 4,200 tokens**, and the phase that had failed three
+times committed on the first try.
 
-Two arguments finished it:
+**The decisions log is written but not transmitted.** Reading the one section that survived
+scoping settled it: four of its seven bullets restated what the tree already showed, one was
+status the gate had proved, and none was about the phase that would read it. Every other
+thing the agent says is checked — by the gate, by the staged diff, by the state-file rules —
+and this was the only unchecked thing passed forward. `.styre/notes-next.md` does that job
+better: addressed to one phase, written forward, 900 bytes against 2,564, consumed rather
+than compounding. The risk accepted is that notes last one hop, so a Phase 1 decision that
+Phase 9 needs will not survive; the answer then is to put it in the design, by hand.
 
-- It is **ungated agent self-report, forwarded to the next agent as fact.** Everything else
-  the agent says is checked — by the gate, by the staged diff, by the state-file rules. This
-  was not, and it was the only thing passed forward. See "Decisions that are settled".
-- `.styre/notes-next.md` already does the job, better: addressed to one phase, written
-  forward ("hypothesis tests here use `@settings(deadline=None)`, follow that"), 900 bytes
-  on the same real phase against 2,564, and consumed rather than compounding.
+### Tool results are the biggest thing in a phase, and `read` is most of them
 
-The risk taken: notes last exactly one phase, so the log was the only channel spanning a
-whole run, and a Phase 1 decision that Phase 9 needs will not survive eight hops. The
-answer when that bites is to put it in the **design**, written by a human, rather than hope
-a local model rediscovers and forwards it. `AGENTS.md` now tells the agent who the audience
-is, so it stops writing run summaries into a file nothing reads back.
+Measured over four phases of app's reminders run (2026-09-25), by share of the characters a
+phase generated or received:
 
-A related trap lives in the **design document's preamble**, which ships to every phase: a
-line telling the agent to read a reference document. On `app` the preamble said *"The
-design means `docs/agent-design.md`. Read it first"*, and phase 3's 2.3 KB body became a
-44 KB context — on a 27B local model the request came back with zero tokens. Measured after
-scoping the log and deleting that line: phase 3's whole context went 22,500 → 4,200 tokens.
-Write phases that are self-contained; a phase that points at a file has an unbounded prompt.
+| | phase 3 | phase 5 | phase 6 | phase 7 |
+| --- | --- | --- | --- | --- |
+| tool results | 32% | 38% | 45% | 42% |
+| assistant text | 23% | 33% | 32% | 30% |
+| thinking | 30% | 23% | 13% | 16% |
+| tool call args | 15% | 7% | 9% | 12% |
 
-Note the AGENTS.md move does not cut tokens per run: pi loads `AGENTS.md` into context
-anyway, so the ~3.4 KB moved rather than vanished. What it buys is one source of truth, and fix-round runs
-that now carry the full contract instead of a shortened reminder.
+The single largest tool result of the whole run was the agent **reading `docs/decisions.md`
+— 51,589 chars, ~13,943 tokens in one call.** That is the file this document decided on
+2026-09-22 to stop transmitting; it came back through the side door, because `AGENTS.md`
+tells the agent to *write* it and the agent opened it first. It is 50 KB because every phase
+since has appended, so the cost grows with the project. `AGENTS.md` now says to **append to
+it without reading it** — it is append-only and nothing in it is addressed to the agent.
 
-Against the older single-`handoff.md` format that grew ~2.1 KB per phase, this is larger for
-a 2–3 phase design and smaller from phase 4 on, and smaller cumulatively from phase 8. Short
-designs pay a premium for the fixed instruction block; that is the accepted trade.
+Second: `src/app/store.py` was read whole in four separate phases at 5.2-5.8k tokens each.
+`AGENTS.md` now tells the agent to **read narrowly** — grep for the lines, read a range, and
+read a file end to end only when about to rewrite it end to end. The rule is framed to the
+agent as its own throughput, because that is what it is: the same phase decodes at 10 tok/s
+early and 6 tok/s late.
 
-Each phase's criteria and gate appear both in the `<design>` block and in the focused section
-below it (~0.7 KB). That repetition is deliberate — it states the contract plainly instead of
-making the agent find its own phase in the design.
+These two rules cost ~1.1 KB in a block that ships to every phase (now 5,830 chars ≈ 1,576
+tokens) against ~14,000 tokens saved in one call in one phase. That trade is only worth
+making for something this size — the block is not the place for advice.
 
-The design block is an excerpt, not the document. On a long plan that is most of the prompt:
-on the 63 KB `gateway-todo.md` it takes a phase prompt from ~65 KB to 16–20 KB. The cost is
-that **everything in the preamble now ships to every phase**, so a plan should keep its
-preamble to what every phase needs. Material for a human after the last phase belongs in its
-own file, not in the preamble; it used to be parked there only because anything after the
-last `## Phase` heading is folded into that phase.
+**A phase that points at a file has an unbounded prompt.** Write phases that are
+self-contained. When a reference document is organised per module — as a good one is — fold
+each module's section into its phase and stop shipping the document.
+
+`styre check` now says this before a night is spent rather than after. `advisories()` flags
+a document the prose tells the agent to **read** — a named document is fine, designs
+cross-reference plans constantly, and a design that says *"do not open `docs/`"* must not be
+warned about its own fix, so a negation before the verb flips the meaning. It also flags a
+phase much larger than its neighbours or carrying more than 8 exit criteria, and a phase
+whose prose **asks for a skipped test** — the guard rejects an added skip or xfail marker,
+so such a phase fails verification for doing what the design told it to (app phase 12,
+2026-09-23: *"skip on non-macOS as `tests/test_scripts.py` already does"*, agent complied,
+guard rejected, a fix round spent arguing the markers back out). Only the directive forms
+count: a marker name, `skip` governing a test noun, or `skip on/when/unless`. The loose
+version flagged *"`rrule`'s skipping behaviour"* — the subject under test — which is the
+same signal-in-noise failure again. All three are advice and never change the exit code. Without the reading-verb and negation rules the check
+reported 7 documents on a real design where 1 mattered — the same signal-in-noise failure
+`review.py` made with `MAX_HITS`.
+
+What stays, deliberately:
+
+- The design block is an **excerpt**: preamble, a phase-title index, that phase's section.
+  On the 63 KB `gateway-todo.md` that is ~65 KB → 16–20 KB per prompt. The cost is that
+  **the preamble ships to every phase**, so keep it to what every phase needs.
+- Each phase's criteria and gate appear twice, in the `<design>` block and in the focused
+  section below it (~0.7 KB). That states the contract plainly instead of making the agent
+  find its own phase.
+- Standing rules live in `AGENTS.md`. This moves ~3.4 KB rather than removing it — pi loads
+  that file anyway — and buys one source of truth plus fix rounds that carry the full
+  contract.
 
 ## Working on this code
 
 - Python stdlib only at runtime. pytest is the one dev dependency; nothing else.
 - Keep every existing behavior working.
 - One module, one job. A new concern gets a module; it does not get bolted onto `runner.py`.
-- `TODO.md` holds the agreed next steps; start there, and do T4 before the others.
+- `TODO.md` holds the agreed next steps; start there.
 - pi is available and authenticated — get real data from it rather than assuming. Capture new
   fixtures into `tests/fixtures/` when a task needs a shape not covered there.
 - Run the suite: `uv run --with pytest python -m pytest -q`. The end-to-end tests drive the
@@ -538,35 +723,59 @@ last `## Phase` heading is folded into that phase.
 
 ## Token accounting
 
-Until 2026-09-20 every `usage` block in the event stream read
-`{input: 0, output: 0, totalTokens: 0}`, and this file recorded that as a fact about local
-providers. It was not. The mlxserve provider block in `~/.config/pi/agent/models.json` declared:
+Usage lives at `message_end.message.usage`. To total a phase, read
+`<run>/logs/phaseN.events.jsonl` and, over the `message_end` events, **sum `output` and take
+the largest `totalTokens`** — `message_update.usage` is cumulative within a step and must
+never be summed. The first `message_end` of a run carries `None` rather than `0`; absent is
+not zero.
 
-```json
-"compat": { "supportsUsageInStreaming": false }
-```
+⚠️ **`input` is not cumulative.** This file said it was until 2026-09-23, and `summarize`
+had an `Input` column built on it. Measured over all twelve phases of the app run: `input`
+is non-monotonic in every one, and `totalTokens = input + cacheRead + output` holds exactly
+(44,766 = 1,149 + 43,008 + 609). It is the step's **uncached prefill**, so the last value is
+one step's tail and the sum is total prefill work. Neither is a phase's context; that is
+`max(totalTokens)`.
 
-so pi streamed without asking for usage and filled in zeros. The server was asked directly and
-reports usage perfectly well, in streaming mode too, given
-`stream_options: {"include_usage": true}` — along with `time_to_first_token`,
-`generation_tokens_per_second` and prefill timings. The flag is now `true`, and a `message_end`
-carries real numbers: `{input: 1507, output: 34, cacheRead: 6144, totalTokens: 7685}`.
+**Peak context is what a phase costs.** Across those twelve phases wall time ran at roughly
+**a minute per 1,000 tokens of peak context** — 22.9k/17.6 min, 44.8k/37.9, 59.1k/61.8,
+60.4k/69.0, 66.2k/78.9, 86.3k/94.0 — with the rate sagging from 1,300 tok/min at 23k to 920
+at 86k as decode halves from 23 to 12 tok/s. The two phases over 85k were the slowest and
+the one that timed out. Size phases against this number, not against the prompt.
 
-Note `totalTokens` includes `cacheRead`, and **prompt caching is live on this provider** — 6144
-of those 7685 tokens were cache hits on a trivial prompt. That matters for the prompt-scoping
-work: a stable prefix is cheap on the second and later phases.
+**Smaller context is faster, measured per phase.** Decode rate against peak context over
+one 7-phase run (2026-09-25), from `styre watch`'s tok/s:
 
-To total a phase, read `<run>/logs/phaseN.events.jsonl` and, over the `message_end` events,
-**sum `output` but take the last `input`** — `message_update.usage` is cumulative and must
-never be summed (the same trap, one level down). The first `message_end` of a run carries
-`None` rather than `0`; that is absent, not zero.
+| peak ctx | 48k | 51k | 72k | 77k | 86k | 96k |
+| --- | --- | --- | --- | --- | --- | --- |
+| tok/s | 10.1 | 9.3 | 8.6 | 8.0 | 7.6 | 6.2 |
 
-⚠️ `pi_simple.jsonl`, `pi_toolcall.jsonl` and `pi_session.jsonl` were captured before the
-fix, so their usage blocks are zeros. A parser written against them must not conclude that
-counts are always zero. `pi_usage.jsonl` (captured 2026-09-20, after the fix) is the one
-with real numbers: `input 1560, output 23, cacheRead 6144, reasoning 0` and a `model` on
-`message_end`. Note this provider *does* report `reasoning`, as a real 0 rather than an
-absent field — the "n/a is not 0" rule is for providers that omit it, not this one.
+Doubling context costs about 39% of the rate: decode is memory-bandwidth-bound, and every
+token re-reads the whole KV cache. **The curve flattens below ~30k**, though: a second run
+the next day ran phases at 14k/19k/28k and measured 10.7/9.2/10.7 tok/s — no better than
+48k's 10.1, and not even monotonic, because down there the rate is set by per-turn prefill
+and MTP acceptance rather than by KV size. So 96k → 48k is worth 4 tok/s and 48k → 14k is
+worth half of one: size phases under ~60k and stop there. It compounds, because a bigger phase generates more
+tokens *and* generates each one slower — phase 6 at 96k took 130 minutes for 37k output
+tokens, phase 3 at 48k did 22k in 56. This is the second dataset saying the same thing as
+the twelve-phase run above, and it is the measurement behind `writing-designs.md`.
+
+`totalTokens` includes `cacheRead`, and **prompt caching is live** — on a measured phase,
+403k of 453k tokens the model saw were cache hits on the stable prefix. A collapse in that
+ratio means a prompt prefix stopped being stable.
+
+Two traps this file has already fallen into:
+
+- ⚠️ **Usage was zero for a configuration reason, not a local-model reason.** The mlxserve
+  provider declared `compat: {supportsUsageInStreaming: false}`, so pi streamed without
+  asking for usage. It is `true` now. `pi_simple.jsonl`, `pi_toolcall.jsonl` and
+  `pi_session.jsonl` predate the fix and read as zeros; `pi_usage.jsonl` is the one with
+  real numbers. A parser written against the older three must not conclude counts are
+  always zero.
+- ⚠️ **`usage.reasoning` is not trustworthy on mlxserve.** It reported `0` on a message carrying
+  a 66,781-character thinking block (2026-09-23). The `n/a is not 0` rule still holds for
+  providers that omit the field, but here a reported `0` means nothing, so the summary's
+  Thinking column is not a measurement. Measure thinking by summing the `thinking` content
+  blocks instead.
 
 ## Where the model runs
 
@@ -584,11 +793,11 @@ OpenAI-compatible and wants an API key, which pi holds in `auth.json`. That dire
 and is now dead — its `models.json` still says `supportsUsageInStreaming: false`, lists
 different model ids and does not even parse (a trailing comma). Do not read it for anything;
 verify which tree is live by `echo $PI_CODING_AGENT_DIR`. Because the export lives in
-`.zshrc`, it reaches interactive shells only: a run started from cron or launchd would fall
-back to the dead tree. The default resolves to
-`arsis-dev/ukisai-Swift-Qwen3.8-27b-MTPLX` (262K context) — confirmed by reading `model` out of
-the event stream, not by assuming. Nothing pins it: `settings.json` has no `model` key, so
-installing another mlxserve model can silently change what an overnight run gets.
+`.zshrc`, it reaches interactive shells only. styre no longer depends on any of that: it
+exports `PI_CODING_AGENT_DIR` itself — see "pi runs under styre's own config". Nothing pins
+the model, so installing another mlxserve model can silently change what an overnight run gets;
+read `model` out of the event stream rather than assuming (2026-09-23 it was
+`Qwen3.8-27B-oQ6e-mtp`, not the id this file recorded three days earlier).
 
 What follows from the split:
 
@@ -604,6 +813,83 @@ What follows from the split:
   flat across three phases. A phase's wall time tracks that rate, so a sustained sag means the
   model host is throttling or the link is degrading.
 
+### The host runs out of memory long before it runs out of context
+
+The model advertises a 262K context window. It cannot hold one. Measured 2026-09-23:
+
+```
+iogpu.wired_limit_mb ceiling  42.0 GB      soft 37.8 GB (90%)   hard 39.9 GB (95%)
+model weights, pinned         23.2 GB      → ~14.6 GB for KV + prefill transient
+```
+
+Three failure shapes come out of that, and they look nothing alike from styre:
+
+1. **Rejection.** `Chunked prefill capacity rejected … predicted peak would exceed prefill
+   safety cap`. The server returns an **empty stream**; pi ends the turn and exits 0; the
+   agent writes none of its files. `runner.empty_response()` exists so styre says "the model
+   returned an empty response" instead of blaming the agent — that ambiguity cost two days.
+2. **Thrash.** `Memory pressure ok → soft → hard`, reclaim ~11 GB, back to ok, repeat every
+   ~11 s. Forward progress stops while pi keeps printing, so **the idle watchdog never
+   fires**. It is the one hang shape that keeps talking.
+3. **Throttle.** `Prefill throttled: chunk 2048 -> 1568`. Benign; the scheduler coping.
+
+The transient scales with prefill chunk size (`per_token × chunk ≈ predicted`), not with
+KV format, so KV quantization and chunk size are independent levers. What actually fixed it,
+in order of effect: cutting context (see "Prompt size" and the pi-config section), capping
+the model's thinking budget, and TurboQuant 8-bit KV — which converts only **15 of 64 cache
+layers**, so it is worth roughly a quarter of what "8-bit" suggests.
+
+After those, a phase ran to **54,969 tokens** of context and committed, against rejections at
+19,968 and 26,080 before. Raising `iogpu.wired_limit_mb` and dropping KV to 6-bit were both
+sized against the remaining ~0.5 GB gap and turned out not to be needed.
+
+**The thinking budget is the knob that matters most**, and it is not styre's: it lives in
+pi's `settings.json` as `thinkingBudgets`, and reaches an OpenAI-compatible server only if
+the provider's `compat` block names the field (`thinkingTokenBudgetField: "thinking_budget"`
+here — off by default, so the budget silently goes nowhere without it). A hardcoded
+`reasoning_effort: "xhigh"` in `chatTemplateKwargs` outranked pi's own level until it was
+bound to `{"$var": "thinking.effort"}`. With a budget of 8,192, peak thinking fell from
+66,781 characters to ~12,700.
+
+### Where a long phase's context actually comes from
+
+Not the prompt. Measured on a 12-phase design's hardest phase (2026-09-23), which ran from
+7,304 to 86,334 tokens: **the phase prompt was 4.5% of it.** The rest is the work.
+
+| source | chars | ~tokens |
+| --- | --- | --- |
+| tool results (`read` 22 calls, avg 5,989 ch; largest 17,115) | 198,203 | 53,568 |
+| assistant text — the code it writes | 164,534 | 44,469 |
+| thinking | 78,530 | 21,224 |
+| tool call args — the code again, going out | 52,969 | 14,316 |
+
+Those overlap — a file is written as tool-call arguments, echoed in the edit result, and
+sometimes re-read — so they sum to more than the growth; the ranking is what holds. The
+lesson is that once prompts are lean, **the only lever left on context is how much work a
+phase does**, which is the argument for splitting a phase rather than making room for it.
+
+### `preserve_thinking` is model-specific, not an optimisation
+
+`chatTemplateKwargs.preserve_thinking` decides whether the model's own reasoning is replayed
+in later turns. There is no universal right answer:
+
+- **Qwen3 strips prior-turn thinking by convention.** Its chat template drops `<think>`
+  blocks from historical assistant messages and the model is trained that way, so `false`
+  matches the model and `true` is the unusual setting.
+- **Anthropic's extended thinking is the opposite within a turn** — thinking blocks must be
+  passed back through a tool-use cycle or signature verification fails, though they are
+  dropped across user turns.
+
+Set it from the model's own documentation, not from the token arithmetic. The open question
+on mlxserve is granularity: Qwen's convention strips *prior user turns*, but an agent loop is one
+user message spawning forty assistant/tool cycles, and a flag that also strips the thinking
+attached to the tool call just issued would be more aggressive than Qwen intends.
+
+⚠️ It was set to `false` for styre runs on 2026-09-23 **with six consecutive first-try phase
+commits already banked and nothing failing**, which is the wrong time to move a variable. If
+a later phase loops, forgets, or shows a jump in `fix_rounds_self`, that is the first thing
+to revert. Test a change like this at the start of a run, not at phase 10 of 12.
+
 ## Safety
 
 pi has no sandbox and runs commands without asking. Run overnight jobs in an ordinary clone
@@ -616,15 +902,11 @@ survive to hold ports and locks into the next phase.
 
 ## The supervising layer — Claude as the escape hatch (built 2026-09-21, simplified 2026-09-22)
 
-Decided after a real run: `docs/agent-todo.md`'s Phase 2, in a real target repo, hit a
-genuine contradiction between the design and a pre-existing test fixture, and burned 3h40m
-before the timeout killed it rather than the agent ever reporting `BLOCKED`. A
-higher-capability model (Claude, via Claude Code), reading the logs afterward, diagnosed the
-actual conflict in minutes by cross-referencing the design against the repo, then patched the
-design by hand — the same thing the reference cross-check does the mechanical half of.
-This section
-made that process deliberate rather than accidental; it is now built into `styre run` itself,
-not an external script — `styre` owns the whole loop, including the Claude calls.
+Decided after a real run: a phase hit a genuine contradiction between the design and a
+pre-existing test fixture and burned 3h40m before the timeout killed it, rather than the
+agent ever reporting `BLOCKED`. Claude, reading the logs afterward, diagnosed it in minutes
+and patched the design by hand. This makes that deliberate rather than accidental, inside
+`styre run` rather than an external script.
 
 `styre/touch.py` holds the one Claude invocation (`touch()`); the bounding (`_escalate()`)
 lives in `runner.py`, beside the rest of the phase loop it extends. `--claude-touch` on `run` turns it on — off by
@@ -635,17 +917,12 @@ behaves exactly as before when the flag is not passed.
 **The invocation, verified 2026-09-21, not guessed:** `claude -p --output-format json
 --dangerously-skip-permissions "<prompt>"` (the `CLAUDE` constant in `config.py`, the same
 shape as `PI`). `--output-format json` gives one parseable object —
-`{result, is_error, total_cost_usd, session_id, ...}` — simpler than pi's line stream, no
-new parsing infrastructure needed. `--permission-mode acceptEdits` was tried first and
-**denies Bash outright** (`permission_denials` in the response, confirmed live); even
-`--permission-mode bypassPermissions` was blocked by a classifier when tested from inside a
-nested Claude Code session (an artifact of the nesting, not of `claude -p` itself — not
-re-verified from a plain, non-nested shell). `--dangerously-skip-permissions` is the flag
-that actually works unattended, confirmed by a real Bash tool call completing with
-`permission_denials: []`. Anthropic's own help text for it: *"Recommended only for sandboxes
-with no internet access"* — styre runs it on the user's own live machine, with full internet
-access, which is not that. Accepted anyway, on purpose, after being told this explicitly —
-the same kind of risk `pi`'s own lack of a sandbox already carries here (see "Safety").
+`{result, is_error, total_cost_usd, session_id, ...}` — no new parsing needed.
+`--permission-mode acceptEdits` **denies Bash outright** (confirmed live), so
+`--dangerously-skip-permissions` is the only flag that works unattended. Anthropic's help
+text for it says *"Recommended only for sandboxes with no internet access"*, which this is
+not. Accepted on purpose, after being told so explicitly — the same risk `pi`'s own lack of
+a sandbox already carries (see "Safety").
 
 Three tiers, each trusting the one below only as far as the gate can verify it:
 
@@ -658,49 +935,34 @@ Three tiers, each trusting the one below only as far as the gate can verify it:
 written whether "the agent" is a local pi process or Claude itself. Verification never
 changes; only who gets a turn at writing the phase does.
 
-**When Claude gets involved: never mid-phase.** styre reads the design once at phase start,
-so there is nothing useful to do while pi is actively working — the same reason a live edit
-to `docs/` mid-run does not take effect until the next phase. The only sound entry point is
-where styre already, unmodified, stops on its own: `BLOCKED`, a timeout, or the gate still
-red after `--retries` (default 2, unchanged — a backstop does not make the cheap local path
-cheaper to skip).
+**Never mid-phase.** styre reads the design once at phase start, so there is nothing useful
+to do while pi works. The only sound entry point is where styre already stops on its own:
+`BLOCKED`, a timeout, or the gate still red after `--retries`.
 
-**One touch per stuck phase, zero on a clean one.** Claude gets a single turn, and in it
-does both things the original two-tier ladder split across two calls:
+**One touch per stuck phase, zero on a clean one.** In a single turn Claude:
 
-1. If the design itself is wrong — an instruction that contradicts something already in the
-   repo, a real ambiguity, a missing pointer — patch the design document. This is the shape
-   of the corrections made by hand to a real `agent-todo.md` on 2026-09-21: a test-fixture
-   conflict, a `dataclasses.replace` incompatibility, a hard-coded default a later phase
-   would have silently broken. `ctx.reload()` re-reads the design, so every *later* phase
-   gets the fix too.
-2. Implement the phase. `verify()` — the same one pi's diff is held to — decides whether it
-   is green. If it is, `commit()` runs, with an `Escalated:` line in the commit message body
-   recording that this phase's code was not written by the local model, so the history stays
-   honest.
+1. Patches the design if it is wrong — an instruction contradicting the repo, a real
+   ambiguity, a missing pointer. `ctx.reload()` re-reads it, so every later phase gets the
+   fix too.
+2. Implements the phase. `verify()` — the same one pi's diff is held to — decides. On green,
+   `commit()` runs with an `Escalated:` line in the body, so the history records that this
+   phase was not written by the local model.
 3. If the touch cannot get the gate green, stop and tell a human. A gate that resists both
    the local model's retries and Claude is not a capability gap to push through further; it
    needs a person.
 
-**Why one call and not two.** The original ladder was Touch 1 (review, maybe patch the
-design, then hand the phase back to the local model for a fresh attempt) and Touch 2 (write
-it directly), with a `touches.json` counter bounding them. It was collapsed on 2026-09-22:
-the split was a cost optimisation — spend the cheap local model again before the expensive
-one — not a safety property, since `verify()` judges both paths identically. Against that it
-cost a counter file, a "design bug or capability gap?" classification the prompt had to ask
-for and the code had to branch on, a re-entrant call back into `run_phase()`, and a third
-possible outcome to reason about at 3am. The design fix and the implementation now happen in
-one process that has already read both.
+**Why one call and not two.** The original ladder was a review touch and an execute touch
+with a `touches.json` counter. Collapsed 2026-09-22: the split was a cost optimisation, not
+a safety property — `verify()` judges both paths identically — and it cost a counter file, a
+"design bug or capability gap?" classification, a re-entrant call into `run_phase()`, and a
+third outcome to reason about at 3am.
 
-**Bounding, precisely:** a phase has had its touch if the timeline holds a `touch_start` for
-it. No bookkeeping file — the events are already written, and a resumed run appends to the
-same timeline it reads, so a resume cannot spend a second touch (see
-`test_a_second_stop_on_the_same_phase_does_not_touch_again` in `tests/test_touch.py`). The
-design fix is still committed on its own (`Touch: design fix for phase N`), against an
-emptied index so a phase that stopped on the test guard cannot ride along with it: a plan
-change and a code change are different kinds of change, the same distinction a human made by
-hand (`docs/decisions.md`'s own "make doc more clear" commits, kept apart from phase
-commits).
+**Bounding:** a phase has had its touch if the timeline holds a `touch_start` for it. No
+bookkeeping file; a resumed run appends to the same timeline it reads, so a resume cannot
+spend a second touch (`test_a_second_stop_on_the_same_phase_does_not_touch_again`). The
+design fix is committed on its own (`Touch: design fix for phase N`) against an emptied
+index, so a phase that stopped on the test guard cannot ride along with it: a plan change
+and a code change are different kinds of change.
 
 **`run` also always runs the mechanical review, on by default, for both halves of "review
 and adjustments" — this part needs no flag and costs nothing, unlike a Touch.** Before phase
