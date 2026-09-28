@@ -31,6 +31,7 @@ committed on a red gate.
 | `styre/state.py` | Reading and judging `phaseN.state.json`. |
 | `styre/summarize.py` | Reading a finished run back off disk: the `summarize` subcommand, and the report every `run` prints as it ends. Calls no model. |
 | `styre/watch.py` | `styre watch`: a read-only web view of this repo's runs on localhost. The run list reads only each timeline; a run page scans that run's events on demand; the live panel reads forward from a byte offset so a 2-second refresh is free. Writes nothing, serves nothing off this machine. |
+| `styre/server.py` | The model server's `/status` for the live panel — `watch`'s one outbound read. Finds the server from styre's pi config (default provider's `baseUrl` and `apiKey`), caches the answer 5 s, and gives no line for a server without `/status` (mlxserve). |
 | `styre/timeline.py` | `Timeline`: the append-and-flush writer behind `<run>/timeline.jsonl`. |
 | `styre/runner.py` | `preflight()`, the `Ctx` bundle the loop is threaded with, the phase loop (`run_phase`, `orchestrate`), and `_escalate()` — the Claude-touch bounding. |
 | `orchestrate.py` | Deprecated shim mapping the old single-command form onto the subcommands. |
@@ -335,6 +336,17 @@ prompts, diffs and decisions, and a monitor that can break the run it watches is
 no monitor. There is no route that changes anything, so there is nothing to confirm and no
 auth to get wrong.
 
+**It makes one outbound read: the model server's `/status`** (`styre/server.py`, added
+2026-09-28 when the server became modelhost). A quiet phase can be the model thinking, a
+request queued behind memory, or a server that is not serving, and only the server can say
+which. The live panel shows one line from it — ready, memory pressure, requests waiting
+(and how many on memory, oldest wait), the server's maximum context — and **peak ctx reads
+against pi's `contextWindow`** ("59,447 of 120,000"). The server is found from styre's pi
+config, the answer is cached 5 s so the 2-second poll costs the host one small GET every
+few seconds, a slow host costs the page at most 1.5 s, and mlxserve (no `/status`) gets no line.
+Serving stays 127.0.0.1-only; what changed is only that it reads one thing off the LAN.
+tok/s needs no server help: it is already measured from pi's events, over model time.
+
 ### The timeout is idle, not a deadline
 
 `--timeout` is seconds of silence allowed from pi, not total runtime: `process._watch_idle()`
@@ -519,7 +531,9 @@ are not complexity to be trimmed. Everything else is.
 - Standing rules belong in `AGENTS.md` (pi auto-loads it, fix rounds included); only
   phase-specific material belongs in the prompt.
 - `styre watch` is read-only and localhost-only (2026-09-25). It writes nothing — not even
-  a cache — and has no kill or resume route. A stop button wants auth and a confirm, and a
+  a cache — and has no kill or resume route. Since 2026-09-28 it *reads* one thing off this
+  machine, the model server's `/status` (decided by the operator; see "Watching a run"):
+  still a GET, still no route that changes anything, still served on 127.0.0.1 only. A stop button wants auth and a confirm, and a
   resume button starts unattended spend from a stray click; neither is worth it to a person
   who has a terminal open. The history view scans on demand rather than caching, so styre
   gains no new artifact and the viewer stays a pure reader.
@@ -794,10 +808,48 @@ and is now dead — its `models.json` still says `supportsUsageInStreaming: fals
 different model ids and does not even parse (a trailing comma). Do not read it for anything;
 verify which tree is live by `echo $PI_CODING_AGENT_DIR`. Because the export lives in
 `.zshrc`, it reaches interactive shells only. styre no longer depends on any of that: it
-exports `PI_CODING_AGENT_DIR` itself — see "pi runs under styre's own config". Nothing pins
-the model, so installing another mlxserve model can silently change what an overnight run gets;
-read `model` out of the event stream rather than assuming (2026-09-23 it was
-`Qwen3.8-27B-oQ6e-mtp`, not the id this file recorded three days earlier).
+exports `PI_CODING_AGENT_DIR` itself — see "pi runs under styre's own config". The model is
+pinned in that config's `settings.json` (`defaultProvider` + `defaultModel`). Before
+2026-09-28 nothing pinned it, and with a single mlxserve model listed pi simply took that one.
+Still read `model` out of the event stream rather than assuming.
+
+**Since 2026-09-28 the server is modelhost, not mlxserve**: provider `modelhost`, model
+`mlx-community/Qwen3.8-27B-4bit`, medium, on the same host and port (8000; mlxserve is stopped
+— both will not fit, and they share the port). The provider block is the one modelhost's own
+`modelhost pi` writes (`install/clients.py`): `openai-completions`, `thinkingLevelMap
+{"off": "none"}`, `maxTokens` 32768; `contextWindow` is styre's 120000, not the 262144 the
+server advertises. The mlxserve models stay listed in `models.json`, so going back is a
+settings change. Serve it with `modelhost serve --model mlx-community/Qwen3.8-27B-4bit --host
+0.0.0.0 --api-key <key> --max-cache-disk 16G`.
+
+Why, measured with `~/Dev/model-bench` on 2026-09-27/28:
+
+- **Decode 2-3x mlxserve's on the same size of model** (oQ4e): 56 vs 28 tok/s at 2k, 42 vs 14
+  at 64k, 31 vs 10.6 at 96k. The gap grows with context.
+- **Prefill is not faster on this M4 Pro** (127-130 at 2k, 96-106 at 64-96k, both servers).
+  modelhost's 3x prefill claim is M5 hardware; the chip is the limit here. So inside styre,
+  where each step waits a median ~6 s for its first token, a phase is ~1.5x faster, not 3x.
+- The prompt cache works across pi's steps (366k cached against 22.7k new prefill over a
+  26-step phase), and a styre phase committed first try with a perfect hidden-oracle score.
+
+⚠️ **modelhost has no thinking budget.** Effort names go to the template, "not token budgets"
+(its DEVELOPMENT.md), and every budget field is silently ignored. On a large one-shot
+module it thought 74-122k characters and failed 4 of 4 ways (cut at the cap, stopped with
+an empty answer, one syntax error in 924 lines). `maxTokens` 32768 is the only backstop;
+the gate and fix rounds catch the damage. A phase that produces one very large file is
+where this bites. Upstream #123: `low`/`xhigh` collapse to medium on this model.
+
+⚠️ **A turn can end `stop` with no text** (seen once, mid-thought at 25k tokens). styre
+reads that as an agent that broke its contract, not as the server — the 2026-09-22
+ambiguity again, with non-zero usage so `empty_response()` does not catch it.
+
+⚠️ **modelhost #184** (open): tool-call arguments containing an array or object are buffered
+until complete and the stream carries only SSE comments meanwhile. pi's `write`, `edit`
+and `bash` take strings and stream normally; a structured-argument tool goes silent.
+
+Before modelhost: `Qwen3.8-27B-oQ4e-mtp` on mlxserve (2026-09-28 morning), chosen over oQ6e for
+no memory wall — at 64k oQ4e prefilled at 103 tok/s unthrottled against oQ6e's 39, and at
+96k mlxserve refused oQ6e outright. xhigh made neither 27B better and cost 4x the time.
 
 What follows from the split:
 

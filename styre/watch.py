@@ -31,6 +31,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from styre import server
 from styre.config import DEFAULT_TIMEOUT
 from styre.rundir import RUNS, RunDir
 from styre.summarize import (
@@ -523,7 +524,8 @@ def live_html(run):
                 f"<span class=dim>Reload for the final table.</span>")
     step = live_step(run)
     if not step or not step[0]:
-        return "<b>Between phases.</b> <span class=dim>No pi process is open.</span>"
+        return ("<b>Between phases.</b> <span class=dim>No pi process is open.</span>"
+                + server_html(server.status()))
     n, name, started = step
     tail = tail_for(run, n)
     stale = staleness(run, n)
@@ -532,9 +534,13 @@ def live_html(run):
     threshold = danger_line([timeline_only(r) for r in runs()])
     per_min = rate(run, n)
     stale_class = "bad" if stale is not None and stale > STALE_SECONDS else "dim"
+    # The ceiling is pi's contextWindow for the model styre runs — what the agent is told
+    # it has — not the server's advertised maximum, which the server line shows separately.
+    window = (server.provider() or {}).get("context_window")
+    ceiling = f" <span class=dim>of {window:,}</span>" if window and tail.peak else ""
     cells = [("phase", f"{n} <span class=dim>{esc(name or '')}</span>"),
              ("running", fmt_seconds(elapsed)),
-             ("peak ctx", fmt_count(tail.peak)),
+             ("peak ctx", fmt_count(tail.peak) + ceiling),
              ("ctx/min", "-" if per_min is None else f"{per_min:,.0f}"),
              ("tok/s", fmt_rate(tail.tokens_per_second)),
              ("last output", f"<span class={stale_class}>{fmt_seconds(stale)} ago</span>")]
@@ -544,7 +550,32 @@ def live_html(run):
                                             for k, v in sorted(tail.tool_errors.items()))
               + "</div>") if tail.tool_errors else ""
     return (f"<div class=grid>{grid}<div>{sparkline(series(run, n), threshold)}</div></div>"
-            f"{errors}<pre>{esc(log_tail(run, n))}</pre>")
+            f"{server_html(server.status())}{errors}<pre>{esc(log_tail(run, n))}</pre>")
+
+
+def server_html(s):
+    """One line from the model server's /status. A quiet phase is either the model working,
+    a request queued behind memory, or a server that is not serving: this line says which."""
+    if not s:
+        return ""
+    if s.get("error"):
+        return f"<div class=bad>{esc(s['server'])}: {esc(s['error'])}</div>"
+    parts = [("ready", "ok") if s["ready"] else ("not ready", "bad")]
+    pressure = s.get("memory_pressure") or "?"
+    parts.append((f"memory {pressure}", "dim" if pressure == "normal" else "warn"))
+    if s["waiting"] or s["waiting_memory"] or s["suspended"]:
+        queued = f"{s['waiting']} waiting"
+        if s["waiting_memory"]:
+            queued += f", {s['waiting_memory']} on memory"
+        if s["suspended"]:
+            queued += f", {s['suspended']} suspended"
+        parts.append((f"{queued} (oldest {fmt_seconds(s['oldest_wait_ms'] / 1000)})", "warn"))
+    else:
+        parts.append(("nothing queued", "dim"))
+    if s.get("max_context"):
+        parts.append((f"server max ctx {s['max_context']:,}", "dim"))
+    return (f"<div><span class=dim>{esc(s['server'])}:</span> "
+            + " · ".join(f"<span class={c}>{esc(t)}</span>" for t, c in parts) + "</div>")
 
 
 # --------------------------------------------------------------------------- serving

@@ -21,6 +21,10 @@ def in_repo(tmp_path, monkeypatch):
     """Run every test in a throwaway directory, and drop the tail cache between them."""
     monkeypatch.chdir(tmp_path)
     watch._TAILS.clear()
+    # The live panel asks the model server for its status. Never from a test: that would
+    # read the developer's pi config and call their model host. test_server.py covers it.
+    monkeypatch.setattr(watch.server, "status", lambda: None)
+    monkeypatch.setattr(watch.server, "provider", lambda: None)
     return tmp_path
 
 
@@ -155,6 +159,27 @@ def test_between_phases_reports_no_open_process():
     run = watch.find_run("20260101-000000")
     assert watch.live_step(run) is None
     assert "Between phases" in watch.live_html(run)
+
+
+def test_live_panel_shows_the_server_and_the_context_ceiling(monkeypatch):
+    """The server's own status sits next to the phase, and peak context reads against the
+    window pi was given. Stubbed: test_server.py covers finding and reading the server."""
+    write_run("20260101-000000", RUNNING, events={1: [message_end(stamp(0), 59447)]})
+    monkeypatch.setattr(watch.server, "provider", lambda: {"context_window": 120000})
+    monkeypatch.setattr(watch.server, "status", lambda: {
+        "server": "modelhost", "ready": True, "memory_pressure": "normal", "waiting": 1,
+        "waiting_memory": 1, "suspended": 0, "oldest_wait_ms": 42000, "max_context": 262144})
+    body = watch.live_html(watch.find_run("20260101-000000"))
+    assert "59,447 <span class=dim>of 120,000</span>" in body
+    assert "modelhost:" in body and "ready" in body and "memory normal" in body
+    assert "1 waiting, 1 on memory (oldest 42s)" in body
+    assert "server max ctx 262,144" in body
+
+
+def test_an_unreachable_server_is_said_plainly():
+    body = watch.server_html({"server": "modelhost", "error": "unreachable (timed out)"})
+    assert "class=bad" in body and "unreachable" in body
+    assert watch.server_html(None) == ""   # mlxserve: no /status, so no line at all
 
 
 def test_series_and_peak_come_from_message_end():
