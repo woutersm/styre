@@ -343,8 +343,9 @@ def test_the_handler_serves_the_index_a_run_and_the_live_json():
 
 def test_terminal_shows_the_same_live_facts_as_the_page(monkeypatch):
     """`styre watch -t` renders live_facts too, so the two views cannot disagree."""
+    first_token = {"ts": stamp(8), "line": json.dumps({"type": "message_update"})}
     write_run("20260101-000000", RUNNING,
-              events={1: [message_start(stamp(0)), message_end(stamp(10), 59447, output=100)]},
+              events={1: [message_start(stamp(0)), first_token, message_end(stamp(10), 59447, output=100)]},
               logs={1: "[+00:01] ⚙ read src/a.py ✓\n"})
     monkeypatch.setattr(watch.server, "provider", lambda: {"context_window": 120000})
     monkeypatch.setattr(watch.server, "status", lambda: {
@@ -353,7 +354,9 @@ def test_terminal_shows_the_same_live_facts_as_the_page(monkeypatch):
     text = "\n".join(watch.live_text(watch.find_run("20260101-000000")))
     assert "phase 1 builder" in text
     assert "peak ctx 59,447 of 120,000" in text
-    assert "tok/s 10.0" in text
+    # 8 s waiting for the first token, then 100 tokens in 2 s: prefill 80% of the time.
+    # The fixture's message reports no `input`, so the prefill rate is 0 new tokens a second.
+    assert "prefill 0 tok/s, 80% · writing 50.0 tok/s" in text
     assert "modelhost: ready · memory normal · nothing queued" in text
     assert "read src/a.py" in text
     assert "\033[" not in text          # no colour unless asked
@@ -387,3 +390,26 @@ def test_the_live_panel_counts_compactions(monkeypatch):
     text = "\n".join(watch.live_text(run))
     assert "2 failed compaction(s), 1 compaction(s) cancelled by styre" in text
     assert "2 failed compaction(s)" in watch.live_html(run)
+
+
+
+def test_prefill_and_writing_are_measured_apart():
+    """A phase that reads spends most of its model time before the first token. The blended
+    rate hid that: on 2026-09-28 it read 4.6 tok/s while the model wrote at 36 and the server
+    prefilled at 116, the M4's limit."""
+    def update(ts):
+        return {"ts": ts, "line": json.dumps({"type": "message_update"})}
+
+    def end(ts, fresh, output):
+        return {"ts": ts, "line": json.dumps({"type": "message_end", "message": {
+            "usage": {"input": fresh, "output": output, "totalTokens": 40000}}})}
+
+    write_run("20260101-000000", RUNNING, events={1: [
+        message_start(stamp(0)), update(stamp(30)), end(stamp(32), 3480, 72),     # a read
+        message_start(stamp(40)), update(stamp(43)), end(stamp(53), 348, 360),    # a write
+    ]})
+    tail = watch.tail_for(watch.find_run("20260101-000000"), 1)
+    assert tail.prefill_per_second == pytest.approx(3828 / 33)
+    assert tail.write_per_second == pytest.approx(432 / 12)
+    assert tail.prefill_share == pytest.approx(33 / 45)
+    assert tail.tokens_per_second == pytest.approx(432 / 45)  # the blended rate, unchanged

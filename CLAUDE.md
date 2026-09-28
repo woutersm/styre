@@ -329,7 +329,15 @@ spans a failed attempt, a six-hour gap, and the resume that succeeded.
 Across app's reminders run it makes the decay in CLAUDE.md's own throughput note visible
 per phase: 48k ctx → 10.1 tok/s, 51k → 9.3, 72k → 8.6, 77k → 8.0, 86k → 7.6, 96k → 6.2.
 
-The live numbers are phase and step, elapsed, **peak context**, context per minute, **tok/s**, and
+**The live panel splits that rate in two** (2026-09-28), because the blended number hid
+where the time went: it read 4.6 tok/s on modelhost while the model wrote at ~36 and prefilled
+at ~116 — the M4's limit, the same on every server. `message_start` → first `message_update`
+is **prefill** (rate: the message's uncached `input` over that span, plus the share of model
+time it took); first update → `message_end` is **writing** (output over that span). A phase
+that reads a lot shows a high prefill share, and the lever is then context, not the server.
+The run page's per-phase `tok/s` column stays blended, so history stays comparable.
+
+The live numbers are phase and step, elapsed, **peak context**, context per minute, **prefill** and **writing** tok/s, and
 **seconds since the last output** — the last one because the idle watchdog does not fire
 until `--timeout`, hours later, while a human wants to know at five minutes. Each phase gets
 an inline-SVG sparkline of context over time; no chart library, no CDN, nothing fetched.

@@ -174,6 +174,14 @@ class _Tail:
         self.tool_errors = {}
         self.decode_tokens = 0      # output tokens, over messages we could time
         self.decode_seconds = 0.0   # message_start -> message_end, summed
+        # The same span split at the first token: before it the server is prefilling what is
+        # new in the context, after it the model is writing. A phase that is reading spends
+        # most of its time in the first half, and the blended rate above hides that.
+        self.prefill_tokens = 0     # usage.input: the uncached, newly prefilled tokens
+        self.prefill_seconds = 0.0  # message_start -> first message_update
+        self.write_tokens = 0       # usage.output
+        self.write_seconds = 0.0    # first message_update -> message_end
+        self._first_token = None
         self.compactions_failed = 0     # pi's own compaction, failed (2026-09-28's loop)
         self.compactions_cancelled = 0  # cancelled by styre's no-compaction extension
         self._message_start = None
@@ -205,7 +213,10 @@ class _Tail:
             return
         stamp = parse_ts(wrapper.get("ts"))
         if event.get("type") == "message_start":
-            self._message_start = stamp
+            self._message_start, self._first_token = stamp, None
+        elif event.get("type") == "message_update":
+            if self._message_start and self._first_token is None:
+                self._first_token = stamp
         elif event.get("type") == "compaction_end":
             if event.get("aborted"):
                 self.compactions_cancelled += 1
@@ -226,7 +237,13 @@ class _Tail:
             if output and self._message_start and stamp:
                 self.decode_seconds += (stamp - self._message_start).total_seconds()
                 self.decode_tokens += output
-            self._message_start = None
+                if self._first_token:
+                    fresh = usage.get("input") or 0
+                    self.prefill_seconds += (self._first_token - self._message_start).total_seconds()
+                    self.prefill_tokens += fresh
+                    self.write_seconds += (stamp - self._first_token).total_seconds()
+                    self.write_tokens += output
+            self._message_start, self._first_token = None, None
 
     @property
     def peak(self):
@@ -248,6 +265,24 @@ class _Tail:
         attempt, a six-hour gap, and the resume that succeeded.
         """
         return self.decode_tokens / self.decode_seconds if self.decode_seconds else None
+
+    @property
+    def prefill_per_second(self):
+        """New context tokens the server prefilled per second, waiting for each message's
+        first token: the hardware's reading speed (~116 on app's M4 Pro, whatever the
+        server), and where a phase that reads a lot spends its time."""
+        return self.prefill_tokens / self.prefill_seconds if self.prefill_seconds > 0 else None
+
+    @property
+    def write_per_second(self):
+        """Output tokens per second after the first token: the model's writing speed."""
+        return self.write_tokens / self.write_seconds if self.write_seconds > 0 else None
+
+    @property
+    def prefill_share(self):
+        """The fraction of model time spent prefilling, or None before anything is timed."""
+        total = self.prefill_seconds + self.write_seconds
+        return self.prefill_seconds / total if total > 0 else None
 
 
 _TAILS = {}
@@ -549,6 +584,9 @@ def live_facts(run):
         window=(server.provider() or {}).get("context_window"),
         per_min=rate(run, n),
         tok_s=tail.tokens_per_second,
+        prefill_s=tail.prefill_per_second,
+        write_s=tail.write_per_second,
+        prefill_share=tail.prefill_share,
         stale=stale,
         stale_class="bad" if stale is not None and stale > STALE_SECONDS else "dim",
         tool_errors=dict(sorted(tail.tool_errors.items())),
@@ -575,7 +613,8 @@ def live_html(run):
              ("running", fmt_seconds(f["elapsed"])),
              ("peak ctx", fmt_count(f["peak"]) + ceiling),
              ("ctx/min", "-" if f["per_min"] is None else f"{f['per_min']:,.0f}"),
-             ("tok/s", fmt_rate(f["tok_s"])),
+             ("prefill", prefill_text(f)),
+             ("writing", "-" if f["write_s"] is None else f"{f['write_s']:.1f} tok/s"),
              ("last output",
               f"<span class={f['stale_class']}>{fmt_seconds(f['stale'])} ago</span>")]
     grid = "".join(f"<div><div class=dim>{k}</div><div class=big>{v}</div></div>"
@@ -588,6 +627,14 @@ def live_html(run):
         errors += f"<div class={css}>{esc(compacting)}</div>"
     return (f"<div class=grid>{grid}<div>{sparkline(f['series'], f['threshold'])}</div></div>"
             f"{server_html(f['server'])}{errors}<pre>{esc(f['log'])}</pre>")
+
+
+def prefill_text(f):
+    """Prefill as a rate and a share: "116 tok/s, 87%" means 87% of the model's time went on
+    reading new context at 116 tokens a second — a phase that is reading, not a slow model."""
+    if f.get("prefill_s") is None:
+        return "-"
+    return f"{f['prefill_s']:.0f} tok/s, {f['prefill_share']:.0%}"
 
 
 def errors_text(tool_errors):
@@ -677,7 +724,8 @@ def live_text(run, color=False):
         lines += [
             f"phase {f['phase']} {c(f['step'] or '', 'dim')} · running {fmt_seconds(f['elapsed'])}",
             f"peak ctx {fmt_count(f['peak'])}{c(ceiling, 'dim')} · ctx/min {per_min} · "
-            f"tok/s {fmt_rate(f['tok_s'])} · "
+            f"prefill {prefill_text(f)} · writing "
+            f"{'-' if f['write_s'] is None else format(f['write_s'], '.1f')} tok/s · "
             f"last output {c(fmt_seconds(f['stale']) + ' ago', f['stale_class'])}",
             c(text_sparkline(f["series"]), "dim"),
         ]
