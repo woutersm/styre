@@ -22,9 +22,10 @@ committed on a red gate.
 | `styre/design.py` | Parsing a design into `Phase` objects; `preamble()` and `phase_context()`; `validate()` (errors) and `advisories()` / `doc_references()` (warnings); the `check` rendering. |
 | `styre/review.py` | `find_references()` / `describe_review()`: the second half of `check`, and what `run` calls automatically before phase 1 and after every commit. For every backtick-quoted identifier a phase names, greps the target repo's test-shaped files for existing references — the mechanical half of catching a phase that collides with a frozen test fixture, before a run starts rather than after a timeout. A name with more than `MAX_HITS` hits is dropped as a local variable or a library, not a collision. |
 | `styre/touch.py` | Claude as the escape hatch — see "The supervising layer". `run_claude()`, `touch_prompt()`, `touch()`: one turn at a stuck phase. Invoked only by `runner.py`'s `_escalate()`, only when `--claude-touch` is passed. |
-| `styre/prompts.py` | `build_prompt()` and `fix_prompt()`. |
+| `styre/prompts.py` | `build_prompt()`, `fix_prompt()` (a fresh fix round), `resumed_fix_prompt()` (a resumed one) and `relay_prompt()` (a fresh start for context). |
+| `styre/pi_extensions/` | The pi extensions every pi process gets with `--extension`: `cap-output.js`, `no-compaction.js`, `strip-thinking.js`. See "Context". Unit-tested in Node by `tests/test_pi_extensions.py`. |
 | `styre/agents.py` | `AGENTS_BODY`, the block written into the target repo's `AGENTS.md`. |
-| `styre/process.py` | `run()` for gates, `stream_pi()` for the agent, `render_event()` / `elapsed()`, `_watch_idle()`, `kill_tree()`. |
+| `styre/process.py` | `run()` for gates, `stream_pi()` for the agent (it also tracks the context and stops pi at a turn end past `relay_at`, returning `RELAY_RC`), `render_event()` / `elapsed()`, `_watch_idle()`, `kill_tree()`. |
 | `styre/gitops.py` | Every git call, including `stage()` / `unstage_all()` (one path, and an emptied index, for the touch's separate design-fix commit) alongside `stage_all()`. |
 | `styre/guard.py` | `verify()` — the gate — and `test_tampering()`. `TEST_PATH` is also what `review.py` scopes its grep to. |
 | `styre/rundir.py` | The per-run directory `.styre/runs/<id>/`: its paths, `latest.txt`, and collecting the agent's two files into it. |
@@ -123,7 +124,9 @@ show up hours into a night.
    printing each one before it starts and its verdict and duration after.
 6. It then runs a test-tampering guard over the staged diff: added skip/xfail markers, or a
    net removal of test functions, fail the phase. Disable with `--allow-test-changes`.
-7. Any failure is fed back to a fresh pi run as a fix prompt, up to `--retries` (default 2).
+7. Any failure is fed back as a fix round, up to `--retries` (default 2): the whole gate's
+   failures at once, the phase prompt and the agent's progress file with them — or, when the
+   failed step ended small, into that step's own resumed session. See "Context".
 8. All green → `git commit -m "<phase title>"`. A phase whose gate passes but which staged no
    diff is treated as a failure, not a success — no empty commits. Otherwise the run stops and
    leaves the work uncommitted; `--from-phase N` resumes.
@@ -238,9 +241,11 @@ claims** (2026-09-25). The model advertises a 262,144-token window; this host re
 prefill at `kv_len=129344`, so the config said twice the truth and nothing in the stack knew
 there was a wall until it hit one. `contextWindow` is 120000. `maxTokens` was 32768 against
 a measured maximum output of **8,249 tokens over 257 messages** (p99 7,607, p90 2,411), so
-it is 12288 — 1.5x the worst case ever seen rather than 4x. Neither number is a limit pi
-enforces by compacting (0.87.0 has no such flag; `--help` offers only `--no-context-files`),
-so treat both as honesty rather than as a mechanism.
+it is 12288 — 1.5x the worst case ever seen rather than 4x. ⚠️ This file said neither number
+is a limit pi enforces. **Wrong**: pi compacts once context passes `contextWindow −
+reserveTokens` (120000 − 16384), in print mode too — it did so 16 times in one phase on
+2026-09-28. styre now cancels that compaction and manages context itself; `contextWindow` is
+also what styre's relay and resume thresholds are fractions of. See "Context".
 
 **The thinking budget is not the lever it looks like.** `thinkingBudgets.medium` is 8,192 and
 only **1 of 259** thinking blocks in a measured run exceeded it; the median block is 339
@@ -531,9 +536,12 @@ are not complexity to be trimmed. Everything else is.
 - Per-run timeout stays: a hung pi process is the failure that stalls a whole night. It is
   measured as idle time, not total runtime (changed 2026-09-22; the code had always been a
   deadline while this file described a watchdog, and the deadline killed productive phases).
-- Fresh pi process per phase. State lives in files and git, not in context.
+- Fresh pi process per phase. State lives in files and git, not in context. Within a phase
+  that now holds too (2026-09-28): a step that outgrows its context budget continues in a
+  fresh process from the agent's progress file, never by summarising its own history.
 - Handoff state is split by lifetime: decisions are permanent and committed, notes last one
-  phase, status is machine-readable. Nothing inventories the repo — the agent reads the tree.
+  phase, the progress file lasts one phase's steps, status is machine-readable. Nothing
+  inventories the repo — the agent reads the tree.
 - The decisions log is **written but not transmitted** (2026-09-22). `docs/decisions.md`
   stays per project, append-only and committed; no phase prompt carries it. It was the one
   artifact styre forwarded to the next agent *as fact* without the gate ever seeing it,
@@ -560,9 +568,10 @@ are not complexity to be trimmed. Everything else is.
 - One directory per run; the agent's own two output paths stay short and stable, and the
   orchestrator archives them. A committed `AGENTS.md` cannot name a run id, and a long path
   is one more thing for the model to get wrong.
-- The pi invocation is fixed: `pi -p --mode json`, the constant `PI`, plus `--session-dir`
-  and `--name` computed per step. No `--pi-cmd`, no `--model`, no auto-appended
-  `--no-approve`. Local models only; pi's own settings pick which — but from **styre's**
+- The pi invocation is fixed: `pi -p --mode json`, the constant `PI`, plus per step
+  `--session-dir` (or `--session <file>` for a resumed fix round), `--name`, one
+  `--extension` per file in `styre/pi_extensions/`, and the prompt files. No `--pi-cmd`, no
+  `--model`, no auto-appended `--no-approve`. Local models only; pi's own settings pick which — but from **styre's**
   pi config directory, not the operator's (2026-09-23, see "pi runs under styre's own
   config"). An unattended run inheriting an interactive setup is how 47% of a phase's
   context became web-search schemas and writing-style rules.
@@ -652,6 +661,43 @@ Shapes worth knowing:
 - **Cost is zero against the local provider, but token counts are real** — as long as the
   provider is configured for it. See "Token accounting" below; the captured fixtures predate
   the fix and still show zeros, so do not take them as evidence of what the stream contains.
+
+## Context: how a phase's context is kept small (2026-09-28)
+
+Measured the same day, on app through modelhost: prefill is **~108 tok/s whatever the server**
+(the M4 Pro is the limit), tool output was **67% of a 60k context**, pi's `read`/`bash` return up
+to **2,000 lines / 50 KB** per call, and pi's own compaction **failed 16 times in one phase**
+because the summary request thought until the token cap — 53 minutes lost before it began
+failing fast. Three rules follow, and every mechanism below is one of them:
+
+1. **Keep tokens out at the source.** Every token that enters costs prefill and stays.
+2. **Never rewrite history.** Changing an earlier message invalidates the prompt cache from
+   that point; re-prefilling 80k is ~13 minutes. That rules out compaction and "forgetting"
+   old tool results alike.
+3. **When a step fills up, restart it from a file**, not from a summary: styre's own "state
+   lives in files" applied within a phase.
+
+| Mechanism | Where | What it does |
+| --- | --- | --- |
+| Output cap | `pi_extensions/cap-output.js` | a `read` returns at most 300 lines, a `bash` its first 60 and last 90, both at most 16k chars, with a note saying what was cut and how to get it. Applied in `tool_result`, so the capped text is what pi stores and the cache stays valid |
+| No compaction | `pi_extensions/no-compaction.js` | cancels pi's compaction (`session_before_compact` → `cancel`). Verified against real pi: without it three failing summary requests, with it none, `compaction_end` `aborted` |
+| No replayed thinking | `pi_extensions/strip-thinking.js` | drops earlier thinking from every request (modelhost ignores `preserve_thinking`) |
+| Whole gate on failure | `guard.verify()` | every gate command runs even after one fails; the fix prompt gets all failures at once |
+| Progress file | `AGENTS.md` block, `rundir.py` | the agent keeps `.styre/progress.md` (Done / Now / Next / Learned, under 40 lines) as it goes; cleared at phase start, archived as `phaseN.progress.md`, handed to every fix round and relay |
+| Relay | `process.stream_pi(relay_at=…)`, `runner.run_phase` | a step whose context passes **0.6 × contextWindow** (72k) is stopped at the next `turn_end` and continues in a fresh process with the task files and the progress file. Not a fix round; at most `MAX_RELAYS` (3), then the phase stops as too big. A step that had already written its state file when stopped is judged normally |
+| Resumed fix round | `runner.run_phase` | when the failed step ended below **0.5 × contextWindow** (60k), the fix round continues its session (`--session`), still in the server's cache, with a short prompt. Above it, a fresh process gets the phase prompt, the failures and the progress file |
+| Visibility | `summarize`, `watch` | relays, resumed rounds, cancelled and failed compactions are counted; a relay's `RELAY_RC` is never reported as pi failing |
+| Phase spread | `design.spread()`, `check` | flags a phase naming paths in 2+ top-level areas and 4+ paths — the shape of every phase that ran largest here — and prints this repo's history against the budget |
+
+The fractions come from the model's `contextWindow` in styre's pi config, so they move with the
+host; a config naming no default model switches relay and resume off. The fix prompt used to
+carry only the failure text, and a fresh fix round began by grepping the design: a fresh fix
+round now attaches the phase prompt first. `--from-phase` continues the latest run only when
+it ran the same design — resuming into another design's run directory mixed two designs'
+event files on 2026-09-28.
+
+⚠️ `strip-thinking.js` also sits in `~/.config/pi/styre/extensions/` from before it moved
+into the package; pi then loads it twice (harmless, it is idempotent). Delete that copy.
 
 ## Prompt size
 

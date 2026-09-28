@@ -34,6 +34,26 @@ AGENTS = Path("AGENTS.md")             # pi discovers this automatically, every 
 BEGIN, END = "<!-- styre:begin -->", "<!-- styre:end -->"
 EXCLUDES = [".styre/", "__pycache__/", ".pytest_cache/", ".ruff_cache/", "*.pyc", "node_modules/", ".venv/"]
 
+# The pi extensions styre loads into every pi process with --extension, shipped in this package
+# so they are versioned with the loop that relies on them (styre/pi_extensions/):
+#   cap-output.js      caps a read/bash result when it enters the context
+#   no-compaction.js   cancels pi's own compaction; styre restarts a full phase instead
+#   strip-thinking.js  drops earlier thinking from every request
+PI_EXTENSIONS = tuple(sorted((Path(__file__).parent / "pi_extensions").glob("*.js")))
+
+# Context management, as fractions of the contextWindow in styre's pi config: what the agent
+# is told it has, and so what the model host was sized for. Fractions, not token counts, so
+# the numbers move with the config instead of being one host's facts.
+# - A step whose context passes RELAY_FRACTION is stopped at the end of its current turn and
+#   the phase continues in a fresh process from the agent's progress file. 0.6 of 120k is 72k:
+#   past ~60k decode has slowed by a third and prefill throttles on a 48 GB host.
+# - A fix round resumes the failed step's own session when that step ended below
+#   RESUME_FRACTION: its conversation is still in the server's prompt cache, so a small fix
+#   costs a minute instead of a fresh process re-reading the phase. Above it, a fresh start.
+RELAY_FRACTION = 0.6
+RESUME_FRACTION = 0.5
+MAX_RELAYS = 3  # fresh starts a phase may take for context before it counts as stuck
+
 DEFAULT_RETRIES = 2
 # Seconds of *silence* allowed from pi, not total runtime — see process._watch_idle. It
 # stays in hours rather than minutes because pi emits nothing at all for the length of a

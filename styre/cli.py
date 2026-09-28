@@ -8,9 +8,9 @@ from styre.config import DEFAULT_GATE_TIMEOUT, DEFAULT_RETRIES, DEFAULT_TIMEOUT,
 from styre.design import advisories, describe, parse_phases, phase_context, validate
 from styre.prompts import build_prompt
 from styre.review import describe_review
-from styre.rundir import resolve
-from styre.runner import PreflightError, orchestrate, preflight
-from styre.summarize import summarize
+from styre.rundir import RUNS, resolve
+from styre.runner import PreflightError, context_budget, orchestrate, preflight
+from styre.summarize import history_lines, repo_history, summarize
 from styre.watch import DEFAULT_PORT, serve, terminal
 
 EXAMPLES = """examples:
@@ -64,6 +64,11 @@ def cmd_check(args):
         print("\n--- Worth a look before you start ---")
         for note in notes:
             print(f"  ⚠ {note}")
+
+    history = history_lines(repo_history(RUNS), context_budget()[0])
+    if history:
+        print("\n--- This repository's phases so far ---")
+        print("\n".join(f"  {line}" for line in history))
 
     print("\n--- What each phase's prose already names in this repository ---")
     print(describe_review(phases))

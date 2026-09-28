@@ -394,3 +394,114 @@ def test_events_and_log_are_written_separately(styre, repo, commits):
     log = (run_dir(repo) / "logs" / "phase1.log").read_text(encoding="utf-8")
     assert "thinking_delta" not in log                     # the readable log does not
     assert "$ test -f done.txt" in log                     # gate output lands here too
+
+
+# --- context management: extensions, fix rounds, relays ------------------------------------
+
+def with_window(pi_config, window=1000):
+    """A pi config naming a default model with a context window: relay at 60%, resume below
+    50% (600 and 500 tokens here)."""
+    (pi_config / "settings.json").write_text(json.dumps(
+        {"defaultProvider": "p", "defaultModel": "m"}), encoding="utf-8")
+    (pi_config / "models.json").write_text(json.dumps({"providers": {"p": {
+        "baseUrl": "http://127.0.0.1:1/v1", "models": [{"id": "m", "contextWindow": window}]}}}),
+        encoding="utf-8")
+
+
+def argvs(repo):
+    return [json.loads(line) for line in (run_dir(repo) / "pi-argv.jsonl").read_text().splitlines()]
+
+
+def attached(argv):
+    return [a[1:].rsplit("/", 1)[-1] for a in argv if a.startswith("@")]
+
+
+def test_every_pi_step_loads_styres_extensions(styre, repo):
+    from styre.config import PI_EXTENSIONS
+    styre("run", "design.md", "--quiet")
+    names = {p.name for p in PI_EXTENSIONS}
+    assert names == {"cap-output.js", "no-compaction.js", "strip-thinking.js"}
+    for argv in argvs(repo):
+        loaded = {argv[i + 1].rsplit("/", 1)[-1] for i, a in enumerate(argv) if a == "--extension"}
+        assert loaded == names
+
+
+def test_a_fresh_fix_round_gets_the_phase_prompt_and_the_progress_file(styre, repo):
+    r = styre("run", "design.md", "--quiet",
+              plan={"phase1.prompt.md": "bad_gate", "phase1.fix1.md": "ok"})
+    assert r.returncode == 0, r.stdout
+    fix_argv = [a for a in argvs(repo) if "phase1.fix1.md" in attached(a)][0]
+    assert attached(fix_argv) == ["phase1.prompt.md", "phase1.fix1.md"]  # the task, then what failed
+    assert "--session-dir" in fix_argv and "--session" not in fix_argv
+    fix = (run_dir(repo) / "phase1.fix1.md").read_text()
+    assert "Done: ran phase1.prompt.md" in fix  # the progress file the builder left
+    assert "test -f done.txt" in fix
+    assert "fresh process" in r.stdout
+
+
+def test_a_small_fix_round_resumes_the_session(styre, repo, pi_config):
+    with_window(pi_config)  # the fake reports 15 tokens of context: well under 500
+    r = styre("run", "design.md", "--quiet",
+              plan={"phase1.prompt.md": "bad_gate", "phase1.fix1.md": "ok"})
+    assert r.returncode == 0, r.stdout
+    builder, fix = [a for a in argvs(repo) if attached(a) and attached(a)[-1].startswith("phase1.")][:2]
+    session = fix[fix.index("--session") + 1]
+    assert session.endswith(".jsonl") and "--session-dir" not in fix
+    assert attached(fix) == ["phase1.fix1.md"]  # the conversation already holds the phase
+    assert "resuming the session at 15 tokens" in r.stdout
+    ends = [e for e in timeline(repo) if e["event"] == "pi_end" and e["phase"] == 1]
+    assert [e.get("resumed") for e in ends] == [None, True]
+
+
+def test_a_large_fix_round_starts_fresh(styre, repo, pi_config):
+    with_window(pi_config)
+    r = styre("run", "design.md", "--quiet", env_extra={"FAKE_PI_CONTEXT": "550"},  # 500 ≤ 550 < 600
+              plan={"phase1.prompt.md": "bad_gate", "phase1.fix1.md": "ok"})
+    assert r.returncode == 0, r.stdout
+    fix = [a for a in argvs(repo) if "phase1.fix1.md" in attached(a)][0]
+    assert "--session" not in fix and attached(fix) == ["phase1.prompt.md", "phase1.fix1.md"]
+
+
+def test_a_step_past_the_threshold_continues_in_a_fresh_process(styre, repo, pi_config, commits):
+    with_window(pi_config)
+    r = styre("run", "design.md", "--quiet", plan={"phase1.prompt.md": "grow"}, timeout=60)
+    assert r.returncode == 0, r.stdout
+    assert commits()[:2] == ["Phase 2: Second phase", "Phase 1: First phase"]
+    relays = [e for e in timeline(repo) if e["event"] == "relay"]
+    assert [(e["phase"], e["step"], e["context"], e["relay_at"]) for e in relays] == [
+        (1, "builder", 900, 600)]
+    relay_argv = [a for a in argvs(repo) if "phase1.relay1.md" in attached(a)][0]
+    assert attached(relay_argv) == ["phase1.prompt.md", "phase1.relay1.md"]
+    text = (run_dir(repo) / "phase1.relay1.md").read_text()
+    assert "fresh process" in text and "Done: ran phase1.prompt.md" in text
+    assert [e["rounds"] for e in timeline(repo) if e["event"] == "phase_end"][0] == 0  # not a fix round
+    assert [e["relays"] for e in timeline(repo) if e["event"] == "phase_end"][0] == 1
+
+
+def test_relays_are_bounded(styre, repo, pi_config, commits):
+    with_window(pi_config)
+    r = styre("run", "design.md", "--quiet", default="grow", timeout=120)
+    assert r.returncode == 1
+    assert "fresh starts did not finish the phase" in r.stdout and "split it" in r.stdout
+    assert commits() == ["initial"]
+
+
+def test_a_step_that_finished_before_its_last_turn_is_not_relayed(styre, repo, pi_config, commits):
+    with_window(pi_config)
+    r = styre("run", "design.md", "--quiet", plan={"phase1.prompt.md": "grow_done"}, timeout=60)
+    assert r.returncode == 0, r.stdout
+    assert not [e for e in timeline(repo) if e["event"] == "relay"]
+    assert "Phase 1: First phase" in commits()
+
+
+def test_a_resume_continues_only_a_run_of_the_same_design(styre, repo):
+    """--from-phase used to continue the latest run whatever design it ran; two designs' phases
+    then shared one directory's event files, and each summary counted the other's tokens."""
+    styre("run", "design.md", "--quiet")
+    first = run_dir(repo)
+    (repo / "other.md").write_text((repo / "design.md").read_text(), encoding="utf-8")
+    r = styre("run", "other.md", "--quiet", "--from-phase", "2", "--allow-dirty")
+    assert "the latest run" in r.stdout and "starting a new run directory" in r.stdout
+    assert run_dir(repo) != first
+    r = styre("run", "other.md", "--quiet", "--from-phase", "2", "--allow-dirty")
+    assert "starting a new run directory" not in r.stdout  # same design: continued

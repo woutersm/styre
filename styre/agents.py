@@ -58,11 +58,32 @@ spend a fix round on it.
   are spending, not just the machine's memory.
 - **Never read anything under `.styre/`.** It is the orchestrator's working directory, not
   yours: run logs, timelines, prompts and other phases' files. Nothing in it helps you build
-  this phase, and reading it spends the context you need for the work. Write exactly the two
-  files your prompt names there, and nothing else — no listing it, no looking for another
-  phase's state file to copy. The format you need is below, in full.
+  this phase, and reading it spends the context you need for the work. Write exactly the
+  files named below there, and nothing else — no listing it, no looking for another phase's
+  state file to copy. The formats you need are below, in full.
+- **Tool output is capped.** A `read` returns at most 300 lines and a command's output keeps
+  its first and last lines; a note says what was left out and how to get it. Read ranges and
+  narrow commands instead of asking for everything.
+
+## Your progress file
+
+Keep `.styre/progress.md` up to date while you work: overwrite it after every step that
+finishes something — a file written, a group of tests passing, a gate command green. If your
+process is restarted, or a fix round starts after you stop, this file and the working tree
+are all the next process gets, so it saves you from re-reading what you already know.
+
+Keep it under 40 lines, in this shape:
+
+```
+Done: what is finished and verified (files, tests, gate commands that pass)
+Now: what you are in the middle of
+Next: what is left, in order
+Learned: facts the tree does not show — a command that works, a trap, a decision
+```
 
 ## The three files you write when you finish
+
+Beside `.styre/progress.md`, which you keep as you go:
 
 | File | Lifetime | Who reads it |
 | --- | --- | --- |

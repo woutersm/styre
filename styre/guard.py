@@ -13,6 +13,7 @@ from styre.timeline import Timeline
 TEST_PATH = re.compile(r"(^|/)(tests?/|test_[^/]*\.py$|[^/]*\.(test|spec)\.[cm]?[jt]sx?$)")
 SKIP_RE = re.compile(r"pytest\.(mark\.)?(skip|xfail)|unittest\.skip"
                      r"|\b(it|test|describe)\.(skip|only)\(|\bxit\(|\bxdescribe\(")
+GATE_REPORT_CHARS = 8000  # the fix prompt's share for gate output, all failures together
 TESTDEF_RE = re.compile(r"^\s*(async\s+)?def\s+test_|^\s*(it|test)\(")
 
 
@@ -51,6 +52,12 @@ def verify(phase, log, gate_timeout=None, allow_test_changes=False, timeline=Non
     inference is one more thing to get wrong later.
     """
     tl = timeline or Timeline()
+    # Every command runs, even after one fails. A gate that stopped at its first red command
+    # handed the fix round one failure, and the next gate run found the next — one fix round
+    # each, for failures that were all there at once (2026-09-28: `ruff` failed a 3-hour
+    # phase, and mypy, the tests and the build had not been run). A whole gate is ~40 s; a
+    # fix round is a fresh process re-reading the phase.
+    failures = []
     for cmd in phase.gate:
         # Printed before the command runs, finished after it: a gate is the longest silence
         # in a phase — a test suite can hold the terminal for minutes — and an unattended run
@@ -63,8 +70,20 @@ def verify(phase, log, gate_timeout=None, allow_test_changes=False, timeline=Non
         verdict = "ok" if rc == 0 else f"FAILED (exit {rc})"
         print(f" → {verdict} ({time.monotonic() - started:.1f}s)", flush=True)
         if rc != 0:
-            return (f"gate failed: {cmd[:60]}",
-                    f"Gate command failed: `{cmd}` (exit code {rc}). Output tail:\n{out[-6000:]}")
+            failures.append((cmd, rc, out))
+    if failures:
+        first = failures[0][0]
+        more = f" (+{len(failures) - 1} more)" if len(failures) > 1 else ""
+        # The whole report stays near the old single-failure size: each tail is cut to its
+        # share, the last lines kept, since a test run's reason is at its end.
+        share = max(1500, GATE_REPORT_CHARS // len(failures))
+        report = "\n\n".join(
+            f"Gate command failed: `{cmd}` (exit code {rc}). Output tail:\n{out[-share:]}"
+            for cmd, rc, out in failures)
+        if len(failures) > 1:
+            report = (f"{len(failures)} of the {len(phase.gate)} gate commands failed. "
+                      "Fix all of them.\n\n" + report)
+        return f"gate failed: {first[:60]}{more}", report
     if not allow_test_changes:
         stage_all()
         problem = test_tampering(staged_diff())

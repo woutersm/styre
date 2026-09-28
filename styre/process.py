@@ -25,6 +25,9 @@ GREY, RESET = ("\033[90m", "\033[0m") if sys.stdout.isatty() and not os.environ.
 
 INDENT = " " * len("[+00:00] ")  # continuation lines line up under the elapsed stamp
 IDLE_TICK = 5  # how often the watchdog looks; a kill lands within this of the deadline
+# stream_pi's return code when it stopped pi itself because the context outgrew `relay_at`:
+# not a failure, a signal to the phase loop to carry on in a fresh process. EX_TEMPFAIL.
+RELAY_RC = 75
 
 # A child in its own process group can be taken down as a tree when it times out.
 _NEW_GROUP = ({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt"
@@ -136,12 +139,29 @@ def _watch_idle(p, timeout, clock, stop, timed_out):
             return
 
 
-def stream_pi(cmd, timeout=None, log=None, events=None, quiet=False):
+def _context(d):
+    """The context size an assistant `message_end` reports, or None."""
+    if d.get("type") != "message_end":
+        return None
+    message = d.get("message") or {}
+    usage = message.get("usage") if message.get("role", "assistant") == "assistant" else None
+    total = usage.get("totalTokens") if isinstance(usage, dict) else None
+    return total if isinstance(total, int) and total > 0 else None
+
+
+def stream_pi(cmd, timeout=None, log=None, events=None, quiet=False, relay_at=None, stats=None):
     """Run pi, writing every output line to the events file with our own timestamp as it
     arrives, and the readable rendering to the terminal and the log as it happens.
 
     Returns the return code. `timeout` is seconds of *silence* allowed, not total runtime.
+
+    `relay_at`: once an assistant message reports a context of at least this many tokens,
+    pi is stopped at the next `turn_end` — the moment its tool calls have all come back, so
+    nothing is cut off mid-edit — and RELAY_RC is returned. `stats`, when given, is filled
+    with `last_context`, the context of the last assistant message, which is what a fix
+    round's choice between resuming and starting fresh is made on.
     """
+    stats = {} if stats is None else stats
     lg = open(log, "a", encoding="utf-8") if log else None
     if lg:
         lg.write(f"\n$ {shlex.join(cmd)}\n")
@@ -181,6 +201,7 @@ def stream_pi(cmd, timeout=None, log=None, events=None, quiet=False):
                          daemon=True).start()
     if not quiet:
         show(GREY)
+    relayed = False
     try:
         for line in p.stdout:
             clock["last"] = time.monotonic()
@@ -189,8 +210,20 @@ def stream_pi(cmd, timeout=None, log=None, events=None, quiet=False):
                 ev.write(json.dumps({"ts": datetime.now().astimezone().isoformat(), "line": line}) + "\n")
                 ev.flush()
             try:
-                text = render_event(json.loads(line), state)
-            except (json.JSONDecodeError, TypeError):
+                event = json.loads(line)
+                if isinstance(event, dict):
+                    context = _context(event)
+                    if context is not None:
+                        stats["last_context"] = context
+                    if (relay_at and event.get("type") == "turn_end"
+                            and stats.get("last_context", 0) >= relay_at):
+                        relayed = True
+                        emit(f"\n[styre] context at {stats['last_context']:,} tokens, past "
+                             f"{relay_at:,}: continuing in a fresh process from the progress file")
+                        kill_tree(p)
+                        break
+                text = render_event(event, state)
+            except (json.JSONDecodeError, TypeError, AttributeError):
                 # not a JSON event: text mode, or pi complaining. Keep it rather than
                 # swallowing it, otherwise a misconfigured invocation looks like a hang.
                 text = "\n" + INDENT + line.replace("\n", "\n" + INDENT) if line.strip() else ""
@@ -209,6 +242,8 @@ def stream_pi(cmd, timeout=None, log=None, events=None, quiet=False):
     if timed_out.is_set():
         emit(f"\n[styre] TIMEOUT: no output for {timeout}s")
         return finish(124)
+    if relayed:
+        return finish(RELAY_RC)
     return finish(p.returncode if p.returncode is not None else 124)
 
 

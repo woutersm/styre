@@ -70,11 +70,31 @@ def transcript(text):
     emit({"type": "message_end", "message": {"role": "assistant", "timestamp": 1789842291900,
           "content": [{"type": "thinking", "thinking": "secret deliberation"},
                       {"type": "text", "text": text}],
-          "usage": {"input": 10, "output": 5, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 15,
-                    "cost": {"input": 0, "output": 0, "total": 0}}}})
+          "usage": {"input": 10, "output": 5, "cacheRead": 0, "cacheWrite": 0,
+                    "totalTokens": CONTEXT, "cost": {"input": 0, "output": 0, "total": 0}}}})
     emit({"type": "turn_end", "toolResults": []})
     emit({"type": "agent_end", "messages": [], "willRetry": False})
     emit({"type": "agent_settled"})
+
+
+# The context size every message_end reports: a test sets FAKE_PI_CONTEXT to put a step above
+# or below styre's relay and resume thresholds.
+CONTEXT = int(os.environ.get("FAKE_PI_CONTEXT", "15"))
+
+
+def growing_transcript(context):
+    """One turn that ends with the context at `context` tokens, and then a process that keeps
+    working — the shape styre stops at the turn boundary. No agent_end ever comes."""
+    emit({"type": "session", "version": 3, "id": "fake", "cwd": os.getcwd()})
+    emit({"type": "agent_start"})
+    emit({"type": "turn_start"})
+    emit({"type": "message_start", "message": {"role": "assistant", "content": []}})
+    emit({"type": "message_end", "message": {"role": "assistant", "content": [
+          {"type": "text", "text": "still going"}],
+          "usage": {"input": 10, "output": 5, "cacheRead": 0, "cacheWrite": 0,
+                    "totalTokens": context, "cost": {"total": 0}}}})
+    emit({"type": "turn_end", "toolResults": []})
+    time.sleep(60)
 
 
 def write_session(session_dir, name):
@@ -171,10 +191,14 @@ def main():
     if "--version" in sys.argv[1:]:
         print("0.85.1-fake")  # a probe, not a run: touch nothing in the working tree
         return
-    prompt = next((a[1:] for a in sys.argv[1:] if a.startswith("@")), "")
+    # styre attaches the task first and what to do now last (a fix round: the phase prompt,
+    # then the fix prompt), so the action is chosen by the last attached file, as a real
+    # agent follows the last instruction.
+    attached = [a[1:] for a in sys.argv[1:] if a.startswith("@")]
+    prompt = attached[-1] if attached else ""
     name = Path(prompt).name
     global TITLE
-    body = Path(prompt).read_text(encoding="utf-8") if prompt and Path(prompt).exists() else ""
+    body = "".join(Path(f).read_text(encoding="utf-8") for f in attached if Path(f).exists())
     m = re.search(r'appending a "## Phase \d+: (.*?)" section', body)
     TITLE = m.group(1) if m else ""
     plan = json.loads(os.environ.get("FAKE_PI_PLAN", "{}"))
@@ -183,11 +207,28 @@ def main():
     # Record the pi config directory this process was handed, so a test can assert on what
     # the child actually saw rather than on what the parent meant to set.
     sd = flag("--session-dir")
-    if sd:
-        run_root = Path(sd).parent.parent
+    resumed = flag("--session")
+    run_root = Path(sd).parent.parent if sd else Path(resumed).parent.parent.parent if resumed else None
+    if run_root:
         (run_root / f"phase{n}.piconfig").write_text(
             os.environ.get("PI_CODING_AGENT_DIR", ""), encoding="utf-8")
-    write_session(sd, flag("--name"))
+        # Every invocation's arguments, in order, so a test can assert on what styre passed.
+        with open(run_root / "pi-argv.jsonl", "a", encoding="utf-8") as f:
+            f.write(json.dumps(sys.argv[1:]) + "\n")
+    if resumed:
+        with open(resumed, "a", encoding="utf-8") as f:  # pi appends to a resumed session
+            f.write(json.dumps({"type": "session_info", "name": flag("--name")}) + "\n")
+    else:
+        write_session(sd, flag("--name"))
+    Path(".styre").mkdir(exist_ok=True)
+    Path(".styre/progress.md").write_text(f"Done: ran {name}\nNow: {action}\n", encoding="utf-8")
+    if action == "grow":
+        growing_transcript(int(os.environ.get("FAKE_PI_GROW", "900")))
+        return
+    if action == "grow_done":
+        act("ok", n)  # the work and the state file are written; then the context passes the line
+        growing_transcript(int(os.environ.get("FAKE_PI_GROW", "900")))
+        return
     if action == "empty":
         empty_transcript()
     else:

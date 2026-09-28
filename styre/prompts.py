@@ -73,13 +73,61 @@ unmet_criteria is rejected, and a criterion you could not verify is unmet.
 """
 
 
-def fix_prompt(n, phase, failure):
-    """The fix-round prompt: one failure, fed back to a fresh pi process."""
-    return f"""Your work on '{phase.title}' did not pass verification. Fix the problem below.
+def _progress_block(progress):
+    return f"""<your_progress_file>
+{progress or "(empty: nothing was written to .styre/progress.md before this point)"}
+</your_progress_file>"""
+
+
+def fix_prompt(n, phase, failure, progress=""):
+    """The fix-round prompt for a fresh pi process, attached after the phase's own prompt.
+
+    It used to carry the failure and nothing else, so a fresh process knew what failed but not
+    what the phase was: on 2026-09-28 a fix round for two lint errors began by grepping the
+    design and re-reading the fixtures. The phase prompt now comes with it as the first
+    attached file, and the agent's progress file says where the work got to.
+    """
+    return f"""Your work on '{phase.title}' did not pass verification. The first attached file is
+the phase as you were first given it; the work itself is in the working tree, and your
+progress file below says where it got to. Fix the problem below. Start from the failure, not
+from the beginning: read only what the fix needs.
+
 Do not drop features, do not skip, delete or weaken tests, and do not run git commit.
 If the fix involved a real choice, append it to your section of {DECISIONS}.
+Keep .styre/progress.md up to date as you go. When finished, rewrite
+.styre/phase{n}.state.json, raising "fix_rounds_self" by one and updating "status" and
+"unmet_criteria" to reflect where you actually got to.
+
+{_progress_block(progress)}
+
+{failure}
+"""
+
+
+def resumed_fix_prompt(n, phase, failure):
+    """The fix-round prompt for a resumed session: the conversation already holds the phase,
+    the work and the reasoning, so this adds only what failed."""
+    return f"""Your work on '{phase.title}' did not pass verification when the orchestrator ran the
+gate. Fix the problem below; everything else about the phase is as you left it.
+Do not drop features, do not skip, delete or weaken tests, and do not run git commit.
 When finished, rewrite .styre/phase{n}.state.json, raising "fix_rounds_self" by one and
 updating "status" and "unmet_criteria" to reflect where you actually got to.
 
 {failure}
+"""
+
+
+def relay_prompt(n, phase, progress, context, relay_at):
+    """The prompt for a fresh start after a step's context outgrew the threshold, attached after
+    the task it was on (the phase prompt, and the fix prompt when it was in a fix round)."""
+    return f"""You are continuing '{phase.title}' in a fresh process. Your previous process had
+filled its context to {context:,} tokens, past the {relay_at:,} this phase is given, and was
+stopped between two turns — not because anything failed. Everything it did is in the working
+tree; your progress file below is what it knew.
+
+Carry on from where the progress file says you are. Do not start over and do not re-read what
+it already records as done; check the tree only where you need to. Keep .styre/progress.md up
+to date as you go, and finish exactly as the attached task says.
+
+{_progress_block(progress)}
 """

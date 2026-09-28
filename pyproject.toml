@@ -19,6 +19,10 @@ dev = ["pytest>=8"]
 [tool.setuptools]
 packages = ["styre"]
 
+[tool.setuptools.package-data]
+# The pi extensions styre passes to every pi process with --extension (see styre/pi_extensions/).
+styre = ["pi_extensions/*.js"]
+
 [tool.setuptools.dynamic]
 version = {attr = "styre.__version__"}
 

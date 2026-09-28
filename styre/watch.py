@@ -174,6 +174,8 @@ class _Tail:
         self.tool_errors = {}
         self.decode_tokens = 0      # output tokens, over messages we could time
         self.decode_seconds = 0.0   # message_start -> message_end, summed
+        self.compactions_failed = 0     # pi's own compaction, failed (2026-09-28's loop)
+        self.compactions_cancelled = 0  # cancelled by styre's no-compaction extension
         self._message_start = None
 
     def update(self, path):
@@ -204,6 +206,11 @@ class _Tail:
         stamp = parse_ts(wrapper.get("ts"))
         if event.get("type") == "message_start":
             self._message_start = stamp
+        elif event.get("type") == "compaction_end":
+            if event.get("aborted"):
+                self.compactions_cancelled += 1
+            elif event.get("errorMessage"):
+                self.compactions_failed += 1
         elif event.get("type") == "tool_execution_end" and event.get("isError"):
             name = event.get("toolName") or "?"
             self.tool_errors[name] = self.tool_errors.get(name, 0) + 1
@@ -545,6 +552,8 @@ def live_facts(run):
         stale=stale,
         stale_class="bad" if stale is not None and stale > STALE_SECONDS else "dim",
         tool_errors=dict(sorted(tail.tool_errors.items())),
+        compactions_failed=tail.compactions_failed,
+        compactions_cancelled=tail.compactions_cancelled,
         series=series(run, n),
         threshold=danger_line([timeline_only(r) for r in runs()]),
         log=log_tail(run, n),
@@ -573,12 +582,27 @@ def live_html(run):
                    for k, v in cells)
     errors = ("<div class=dim>" + errors_text(f["tool_errors"]) + "</div>"
               if f["tool_errors"] else "")
+    compacting = compaction_text(f)
+    if compacting:
+        css = "warn" if f.get("compactions_failed") else "dim"
+        errors += f"<div class={css}>{esc(compacting)}</div>"
     return (f"<div class=grid>{grid}<div>{sparkline(f['series'], f['threshold'])}</div></div>"
             f"{server_html(f['server'])}{errors}<pre>{esc(f['log'])}</pre>")
 
 
 def errors_text(tool_errors):
     return ", ".join(f"{v} failed {k} call(s)" for k, v in tool_errors.items())
+
+
+def compaction_text(f):
+    """pi's own compactions in this phase, or "". A failed one is the 2026-09-28 shape: the
+    model could not write the summary, and pi tries again after nearly every step."""
+    parts = []
+    if f.get("compactions_failed"):
+        parts.append(f"{f['compactions_failed']} failed compaction(s)")
+    if f.get("compactions_cancelled"):
+        parts.append(f"{f['compactions_cancelled']} compaction(s) cancelled by styre")
+    return ", ".join(parts)
 
 
 def server_parts(s):
@@ -663,6 +687,8 @@ def live_text(run, color=False):
                      + c(" · ", "dim").join(c(t, cls) for t, cls in parts))
     if f.get("tool_errors"):
         lines.append(c(errors_text(f["tool_errors"]), "dim"))
+    if compaction_text(f):
+        lines.append(c(compaction_text(f), "warn" if f.get("compactions_failed") else "dim"))
     if f.get("log"):
         lines.append("")
         lines += [c(line, "dim") for line in f["log"].rstrip().splitlines()[-LOG_LINES:]]

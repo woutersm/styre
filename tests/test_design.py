@@ -155,3 +155,23 @@ def test_a_subject_that_skips_is_not_a_skipped_test():
 def test_a_clean_design_gets_no_advisories():
     text = design("A short preamble every phase needs.")
     assert advisories(text, parse_phases(text), [1000]) == []
+
+
+def test_a_phase_that_spreads_across_the_repo_is_flagged():
+    """Measured on app (2026-09-27/28): the phases that ran largest named paths in two or more
+    top-level areas and four or more paths; the ones that went through did not."""
+    from styre.design import advisories, parse_phases, spread
+    wide = ("## Phase 1: Wide\n`src/app/api/app.py`, `src/app/api/models.py`, "
+            "`ui/src/components/TodoPage.tsx`, new `EditTodo.tsx`, tests.\n"
+            "### Exit criteria\n- `scripts/shot.mjs` on `/todo/1`: 0px\n### Gate\n```\npytest\n```\n")
+    narrow = ("## Phase 2: Narrow\n`src/app/api/`, the day page in `ui/`, tests.\n"
+              "### Exit criteria\n- it works\n### Gate\n```\npytest\n```\n")
+    methods = ("## Phase 3: Names\n`Email/query`, `Email/get`, `Mailbox/get` in `src/app/mail.py`.\n"
+               "### Exit criteria\n- it works\n### Gate\n```\npytest\n```\n")
+    phases = parse_phases(wide + narrow + methods)
+    assert spread(phases[0].body) == (
+        [".", "src", "ui"],
+        ["EditTodo.tsx", "src/app/api/app.py", "src/app/api/models.py", "ui/src/components/TodoPage.tsx"])
+    assert spread(phases[2].body) == (["src"], ["src/app/mail.py"])  # method names are not paths
+    notes = advisories("", phases, [1000, 1000, 1000])
+    assert [n.split(" spreads")[0] for n in notes if "spreads" in n] == ["Phase 1"]

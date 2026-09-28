@@ -36,3 +36,22 @@ def test_deleted_test_file_is_attributed_to_its_old_path():
 
 def test_non_test_files_are_ignored():
     assert guard.test_tampering(diff("src/app.py", "+# pytest.mark.skip", "-def test_helper():")) is None
+
+
+def test_a_red_gate_runs_every_command_and_reports_every_failure(tmp_path, monkeypatch):
+    """One fix round for all of a gate's failures, not one per failure: the commands after a
+    red one still run, and the report names each."""
+    from types import SimpleNamespace
+    monkeypatch.chdir(tmp_path)
+    phase = SimpleNamespace(gate=["echo lint-broken; exit 1", "true", "echo tests-broken; exit 2"])
+    short, full = guard.verify(phase, tmp_path / "log", allow_test_changes=True)
+    assert short == "gate failed: echo lint-broken; exit 1 (+1 more)"
+    assert "2 of the 3 gate commands failed" in full
+    assert "lint-broken" in full and "tests-broken" in full and "exit code 2" in full
+
+
+def test_a_green_gate_still_passes(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    monkeypatch.chdir(tmp_path)
+    assert guard.verify(SimpleNamespace(gate=["true", "true"]), tmp_path / "log",
+                        allow_test_changes=True) is None

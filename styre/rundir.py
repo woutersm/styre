@@ -20,6 +20,10 @@ from styre.config import WORK
 RUNS = WORK / "runs"
 LATEST = WORK / "latest.txt"
 INBOX_NOTES = WORK / "notes-next.md"
+# The agent's working memory within a phase: what is done, what it is on, what is next.
+# Unlike the two files above it outlives a step — a fix round or a restart is handed it — so
+# it is cleared when a phase starts, not when a step does.
+INBOX_PROGRESS = WORK / "progress.md"
 
 
 def inbox_state(n):
@@ -42,6 +46,14 @@ class RunDir:
 
     def fix(self, n, round_):
         return self.root / f"phase{n}.fix{round_}.md"
+
+    def relay(self, n, k):
+        """The prompt for phase n's k-th fresh start after its context outgrew the threshold."""
+        return self.root / f"phase{n}.relay{k}.md"
+
+    def progress(self, n):
+        """The agent's progress file for phase n, as it stood after the latest step."""
+        return self.root / f"phase{n}.progress.md"
 
     def log(self, n):
         return self.root / "logs" / f"phase{n}.log"
@@ -120,6 +132,34 @@ def clear_inbox(n):
     that is not written this time round reads as missing rather than as stale success."""
     inbox_state(n).unlink(missing_ok=True)
     INBOX_NOTES.unlink(missing_ok=True)
+
+
+def clear_progress():
+    """Start a phase with no progress file: the last one belonged to another phase."""
+    INBOX_PROGRESS.unlink(missing_ok=True)
+
+
+def read_progress():
+    """The progress file as the agent last wrote it, or ""."""
+    try:
+        return INBOX_PROGRESS.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+def archive_progress(run, n):
+    """Copy — not move — the progress file into the run directory: the next step of the same
+    phase still needs it where the agent writes it."""
+    text = read_progress()
+    if text:
+        run.progress(n).write_text(text + "\n", encoding="utf-8")
+
+
+def newest_session(run, n):
+    """The session file of phase n's most recent pi process, or None. pi names them
+    `<iso>_<uuid>.jsonl`; a resumed session is appended to, so recency is by mtime."""
+    files = list(run.sessions(n).glob("*.jsonl"))
+    return max(files, key=lambda f: f.stat().st_mtime) if files else None
 
 
 def collect(run, n):

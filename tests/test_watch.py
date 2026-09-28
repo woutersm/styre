@@ -369,3 +369,21 @@ def test_terminal_once_prints_and_exits(capsys):
 def test_terminal_without_runs_says_where_to_run_it(capsys):
     watch.terminal(once=True)
     assert "inside the target repository" in capsys.readouterr().out
+
+
+def test_the_live_panel_counts_compactions(monkeypatch):
+    """A failed compaction is the 2026-09-28 shape — pi retrying a summary the model cannot
+    finish after nearly every step — and it was invisible until the raw events were read."""
+    def compaction(ts, **fields):
+        return {"ts": ts, "line": json.dumps({"type": "compaction_end", "reason": "threshold", **fields})}
+
+    write_run("20260101-000000", RUNNING, events={1: [
+        message_end(stamp(0), 1000),
+        compaction(stamp(1), aborted=False, errorMessage="Auto-compaction failed: token cap"),
+        compaction(stamp(2), aborted=False, errorMessage="Auto-compaction failed: token cap"),
+        compaction(stamp(3), aborted=True),
+    ]})
+    run = watch.find_run("20260101-000000")
+    text = "\n".join(watch.live_text(run))
+    assert "2 failed compaction(s), 1 compaction(s) cancelled by styre" in text
+    assert "2 failed compaction(s)" in watch.live_html(run)

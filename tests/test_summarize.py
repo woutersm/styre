@@ -195,3 +195,54 @@ def test_cache_hits_are_summed_and_shown(tmp_path):
     summary = collect(make_run(tmp_path, fixture="pi_usage.jsonl"))
     assert summary.phases[0].usage.cache_read == 6144
     assert "Cached" in render(summary)
+
+
+def test_relays_resumed_rounds_and_compactions_are_reported_not_failures(tmp_path):
+    """A relay ends its step with RELAY_RC on purpose: counted as a fresh start, never as pi
+    failing. pi's own compactions come from the events: a cancelled one (styre's extension) is
+    counted quietly, a failed one is worth reading about."""
+    timeline = [
+        TIMELINE[0],
+        {"ts": "t", "event": "pi_end", "phase": 1, "step": "builder", "seconds": 60.0, "rc": 75,
+         "context": 81234},
+        {"ts": "t", "event": "relay", "phase": 1, "step": "builder", "context": 81234,
+         "relay_at": 72000, "relays": 1},
+        {"ts": "t", "event": "pi_end", "phase": 1, "step": "builder relay 1", "seconds": 60.0, "rc": 0},
+        {"ts": "t", "event": "pi_end", "phase": 1, "step": "fix 1", "seconds": 30.0, "rc": 0,
+         "resumed": True},
+        {"ts": "t", "event": "phase_end", "phase": 1, "title": "Phase 1: One", "status": "committed",
+         "rounds": 1, "relays": 1, "fix_rounds_self": 0, "unmet_criteria": []},
+    ]
+    run = make_run(tmp_path, timeline)
+    compactions = [
+        {"type": "compaction_end", "reason": "threshold", "aborted": True},
+        {"type": "compaction_end", "reason": "threshold", "aborted": False,
+         "errorMessage": "Auto-compaction failed: generation hit the token cap"},
+        {"type": "compaction_end", "reason": "threshold", "aborted": False,
+         "errorMessage": "Auto-compaction failed: generation hit the token cap"},
+    ]
+    with open(run.events(1), "a", encoding="utf-8") as f:
+        for e in compactions:
+            f.write(json.dumps({"ts": "2026-09-20T22:05:00+02:00", "line": json.dumps(e)}) + "\n")
+    [phase] = collect(run).phases
+    assert phase.pi_failures == []
+    assert phase.relays == [("builder", 81234)] and phase.resumed == 1
+    assert phase.compactions_cancelled == 1 and len(phase.compactions_failed) == 2
+    text = render(collect(run))
+    assert "1 fresh start(s) because the context outgrew its budget (at 81,234 tokens)" in text
+    assert "pi's compaction failed (2x): Auto-compaction failed: generation hit the token cap" in text
+    assert "1 fix round(s) resumed their session" in text
+    assert "pi exited" not in text
+
+
+def test_history_lines_measure_this_repo_against_the_budget():
+    from styre.summarize import history_lines
+    small, large = Phase(n=1, title="Phase 1: Small"), Phase(n=2, title="Phase 2: Large")
+    small.usage.add({"totalTokens": 40000})
+    large.usage.add({"totalTokens": 110000})
+    lines = history_lines([("run-a", small), ("run-a", large)], 72000)
+    assert lines[0] == ("2 phase(s) in 1 run(s): median peak context 40,000, largest 110,000 "
+                        "(Phase 2: Large, run-a).")
+    assert "1 of these phases went past that:" in lines[1]
+    assert lines[2].split() == ["110,000", "Phase", "2:", "Large", "(run-a)"]
+    assert history_lines([], 72000) == []

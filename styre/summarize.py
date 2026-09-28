@@ -17,6 +17,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
 
+from styre.process import RELAY_RC
 from styre.state import read_state
 
 
@@ -133,6 +134,10 @@ class Phase:
     guard_problems: list[str] = field(default_factory=list)
     usage: Usage = field(default_factory=Usage)
     tool_errors: dict = field(default_factory=lambda: defaultdict(int))  # tool name -> count
+    relays: list = field(default_factory=list)       # (step, context) per fresh start for context
+    resumed: int = 0                                 # fix rounds that continued their session
+    compactions_failed: list = field(default_factory=list)  # pi's own error per failed one
+    compactions_cancelled: int = 0                   # cancelled by styre's no-compaction extension
 
     @property
     def name(self):
@@ -146,7 +151,8 @@ class Phase:
         return bool(self.failed_gates or self.pi_failures or self.guard_problems or self.unmet
                     or (self.status and self.status != "committed")
                     or (self.self_rounds and not self.rounds)
-                    or bool(self.tool_errors))
+                    or bool(self.tool_errors) or bool(self.relays)
+                    or bool(self.compactions_failed))
 
 
 @dataclass
@@ -193,8 +199,12 @@ def read_timeline(run, summary):
             phase = phase_of(summary.phases, n)
             phase.pi_steps += 1
             phase.agent_seconds += e.get("seconds") or 0
-            if e.get("rc"):
+            phase.resumed += bool(e.get("resumed"))
+            # A relay ends its step with RELAY_RC on purpose: a fresh start, not a failure.
+            if e.get("rc") and e["rc"] != RELAY_RC:
                 phase.pi_failures.append((e.get("step"), e["rc"]))
+        elif kind == "relay":
+            phase_of(summary.phases, n).relays.append((e.get("step"), e.get("context")))
         elif kind == "gate_end":
             phase = phase_of(summary.phases, n)
             phase.gate_runs += 1
@@ -219,6 +229,13 @@ def read_phase_events(run, phase):
         kind = e.get("type")
         if kind == "tool_execution_end" and e.get("isError"):
             phase.tool_errors[e.get("toolName") or "?"] += 1
+        elif kind == "compaction_end":
+            # pi's own compaction. styre cancels it (aborted); a failed one is the 2026-09-28
+            # shape — a summary request the model could not finish — and worth reading about.
+            if e.get("aborted"):
+                phase.compactions_cancelled += 1
+            elif e.get("errorMessage"):
+                phase.compactions_failed.append(e["errorMessage"])
         elif kind == "message_end":
             usage = (e.get("message") or {}).get("usage")
             if isinstance(usage, dict):
@@ -392,6 +409,15 @@ def where_to_look(summary):
                        "than the gate enforces.")
         for name, n in sorted(p.tool_errors.items()):
             out.append(f"- {n} failed {name} call(s)")
+        if p.relays:
+            peaks = ", ".join(f"{c:,}" for _, c in p.relays if c)
+            out.append(f"- {len(p.relays)} fresh start(s) because the context outgrew its budget"
+                       + (f" (at {peaks} tokens)" if peaks else "")
+                       + ": the phase is doing more work than one context holds")
+        for message, times in unique(p.compactions_failed):
+            out.append(f"- pi's compaction failed{f' ({times}x)' if times > 1 else ''}: {oneline(message)}")
+        if p.resumed:
+            out.append(f"- {p.resumed} fix round(s) resumed their session instead of starting fresh")
         out.append("")
     if len(out) == 2:
         out.append("Nothing to report: every phase went through on the first try.")
@@ -409,3 +435,36 @@ def summarize(run):
     text = render(collect(run))
     (run.root / "summary.md").write_text(text, encoding="utf-8")
     return text
+
+
+def repo_history(runs_dir):
+    """Every phase any run in this repository has left events for, as
+    (run id, Phase) pairs, oldest run first. For `check`: what phases here have cost, so a
+    new design is judged against this repository's own numbers rather than another's."""
+    from styre.rundir import RunDir  # a reader of run directories, like the rest of this module
+    out = []
+    for root in sorted(d for d in runs_dir.glob("*") if d.is_dir()):
+        for phase in collect(RunDir(root)).phases:
+            if phase.usage.peak:
+                out.append((root.name, phase))
+    return out
+
+
+def history_lines(history, budget):
+    """`check`'s account of `repo_history`: how big phases here got, and which passed the
+    context budget a step now has."""
+    if not history:
+        return []
+    peaks = sorted(p.usage.peak for _, p in history)
+    median = peaks[(len(peaks) - 1) // 2]
+    run_count = len({run for run, _ in history})
+    largest_run, largest = max(history, key=lambda rp: rp[1].usage.peak)
+    out = [f"{len(history)} phase(s) in {run_count} run(s): median peak context {median:,}, "
+           f"largest {largest.usage.peak:,} ({largest.name}, {largest_run})."]
+    if budget:
+        over = [(run, p) for run, p in history if p.usage.peak >= budget]
+        out.append(f"A step now gets {budget:,} tokens before styre starts it fresh; "
+                   f"{len(over)} of these phases went past that" + (":" if over else "."))
+        out += [f"  {p.usage.peak:>8,}  {p.name}  ({run})"
+                for run, p in sorted(over, key=lambda rp: -rp[1].usage.peak)[:8]]
+    return out

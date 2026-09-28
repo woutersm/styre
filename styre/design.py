@@ -45,6 +45,16 @@ NOT_RE = re.compile(r"\b(do not|don't|never|no need to|rather than|instead of|wi
 READ_WINDOW = 160
 NEGATION_WINDOW = 40
 MANY_CRITERIA = 8
+# A path a phase names in backticks: a file with an extension, or a directory with a slash.
+PATH_RE = re.compile(r"`((?:[\w.\-$]+/)+[\w.\-$]*|[\w.\-$]+\.[a-z]{1,5})`")
+# Where a phase's own work goes, not what it reads or proves itself with: tests, fixtures and
+# documents come with every phase and say nothing about its spread.
+NOT_AREAS = {"tests", "test", "docs", "fixtures"}
+# The spread that ran largest (2026-09-27/28): app's web-edit phase 3 (API + UI + README, 105k
+# context, compacted) and sources phase 3 (source + API + UI + briefing, 115k, three hours) both
+# named paths in two or more top-level areas and four or more paths; the phases that went
+# through stayed in one area or named fewer.
+SPREAD_AREAS, SPREAD_PATHS = 2, 4
 # The test guard rejects an added skip or xfail marker, so a design that *asks* for one has
 # written a phase that cannot pass its own verification. Measured 2026-09-23: app's phase
 # 12 said "skip on non-macOS as `tests/test_scripts.py` already does", the agent did
@@ -172,6 +182,21 @@ def skip_requests(text):
     return None
 
 
+def spread(body):
+    """(areas, paths) a phase body names: the top-level directories its own work touches, and
+    the distinct paths. A bare file name counts in the area "." (the repository root)."""
+    # The description only: exit criteria and the gate name what the phase is checked with
+    # (`scripts/shot.mjs on /`), not where its work goes.
+    body = re.split(r"(?m)^###\s+Exit criteria", body)[0]
+    paths = {m.group(1) for m in PATH_RE.finditer(body)}
+    # A capitalised name without an extension is not a path: `Email/query` is a JMAP method.
+    # With one it is — `EditTodo.tsx` is a component file.
+    paths = {p for p in paths if p.split("/")[0] not in NOT_AREAS and not p.endswith(".md")
+             and not (p[:1].isupper() and "." not in p.rsplit("/", 1)[-1])}
+    areas = {p.split("/")[0] if "/" in p else "." for p in paths}
+    return sorted(areas), sorted(paths)
+
+
 def advisories(text, phases, sizes, design_path=""):
     """Things that make a design risky without making it unrunnable, so `check` can say them
     before a night is spent rather than after. `sizes` is each phase's prompt length in
@@ -212,6 +237,13 @@ def advisories(text, phases, sizes, design_path=""):
         if why:
             out.append(f"Phase {i} is large — " + " and ".join(why)
                        + ". A phase whose title says \"and\" is usually two phases.")
+    for i, phase in enumerate(phases, 1):
+        areas, paths = spread(phase.body)
+        if len(areas) >= SPREAD_AREAS and len(paths) >= SPREAD_PATHS:
+            named = ", ".join(f"{a}/" if a != "." else "the root" for a in areas)
+            out.append(f"Phase {i} spreads across {named} ({len(paths)} paths). Phases that reach "
+                       "into several parts of the repo at once ran largest; one phase per part "
+                       "keeps each context small.")
     return out
 
 
