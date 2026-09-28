@@ -154,6 +154,7 @@ styre run design.md --from-phase 2 --run-id 20260920-2330   # ... in a specific 
 styre summarize                        # what happened in the last run
 styre summarize 20260920-233014        # ... or a named one, by id or by path
 styre watch                            # read-only web view on localhost, live
+styre watch -t                         # the same live panel in the terminal
 ```
 
 Other flags on `run`: `--quiet` (no live echo to the terminal; the log is still written
@@ -204,7 +205,14 @@ Keep the directory lean — `models.json`, `auth.json`, a `settings.json` carryi
 unattended run does not use, and **no `AGENTS.md`**. The repo's own `AGENTS.md` still reaches
 the agent; it is a project file, found by pi in the working directory, not part of this config.
 
-**`pi-web-access` is now in `packages`, deliberately, and it is the one exception** (added
+**Removed again on 2026-09-28: `packages` is empty.** app's phase 3 used only `read` and
+`bash` while the web tools' schemas were 11,830 of 14,914 characters of tool definitions;
+a trivial prompt went from 5,065 back to 1,588 tokens. The same run found the other two
+context costs — whole-file reads (~67% of a 60k phase) and thinking replayed by modelhost
+(~12%, see `extensions/strip-thinking.js` under "Where the model runs"). What follows is
+the history of why it was added; put it back for a design that must read documentation.
+
+**`pi-web-access` was in `packages`, deliberately, as the one exception** (added
 2026-09-26 for app's TanStack design). The rule above said *no* packages because 3,160 tokens
 of web-search schemas in a run whose design says "no test touches the network" is pure waste.
 That reasoning holds and is not repealed; what changed is that a design arrived whose framework
@@ -285,6 +293,12 @@ a phase in flight. It used to be assembled in memory and written when pi exited,
 the one human-readable file was the one you could not watch.
 
 ### `styre watch`, when the terminal is not where you are
+
+`styre watch -t` (`--terminal`) draws the same live panel in the terminal instead, redrawn
+every 2 s: phase, elapsed, peak ctx against pi's window, ctx/min, tok/s, a block-character
+sparkline, the server line and the last 12 log lines. It follows the latest run (`--run ID`
+for another), `--once` prints it once. Both views render `live_facts()`, so they cannot
+disagree about a number.
 
 `styre watch` serves the same facts as a page on `http://127.0.0.1:8765/`, read-only, from
 the run directories of the repo it is run in. It answers the one question the terminal does

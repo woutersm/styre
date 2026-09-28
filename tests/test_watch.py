@@ -339,3 +339,33 @@ def test_the_handler_serves_the_index_a_run_and_the_live_json():
         h.do_GET()
         assert expect in h.body, (path, h.body[:200])
     assert seen == [200, 200, 200, 404, 404]   # a missing run is a 404, not a 200 page
+
+
+def test_terminal_shows_the_same_live_facts_as_the_page(monkeypatch):
+    """`styre watch -t` renders live_facts too, so the two views cannot disagree."""
+    write_run("20260101-000000", RUNNING,
+              events={1: [message_start(stamp(0)), message_end(stamp(10), 59447, output=100)]},
+              logs={1: "[+00:01] ⚙ read src/a.py ✓\n"})
+    monkeypatch.setattr(watch.server, "provider", lambda: {"context_window": 120000})
+    monkeypatch.setattr(watch.server, "status", lambda: {
+        "server": "modelhost", "ready": True, "memory_pressure": "normal", "waiting": 0,
+        "waiting_memory": 0, "suspended": 0, "oldest_wait_ms": 0, "max_context": 262144})
+    text = "\n".join(watch.live_text(watch.find_run("20260101-000000")))
+    assert "phase 1 builder" in text
+    assert "peak ctx 59,447 of 120,000" in text
+    assert "tok/s 10.0" in text
+    assert "modelhost: ready · memory normal · nothing queued" in text
+    assert "read src/a.py" in text
+    assert "\033[" not in text          # no colour unless asked
+
+
+def test_terminal_once_prints_and_exits(capsys):
+    write_run("20260101-000000", FINISHED)
+    assert watch.terminal(once=True) == 0
+    out = capsys.readouterr().out
+    assert "20260101-000000" in out and "exit 0" in out and "Nothing is running" in out
+
+
+def test_terminal_without_runs_says_where_to_run_it(capsys):
+    watch.terminal(once=True)
+    assert "inside the target repository" in capsys.readouterr().out

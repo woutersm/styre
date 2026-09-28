@@ -27,13 +27,15 @@ from __future__ import annotations
 
 import html
 import json
+import os
+import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from styre import server
 from styre.config import DEFAULT_TIMEOUT
-from styre.rundir import RUNS, RunDir
+from styre.rundir import RUNS, RunDir, latest_run
 from styre.summarize import (
     Run,
     collect,
@@ -515,51 +517,78 @@ def run_html(run):
                 + f"<h2>Where to look</h2><pre>{esc(look)}</pre>")
 
 
-def live_html(run):
-    """The polled panel: what is happening in the phase that is running."""
+def live_facts(run):
+    """What is happening in the phase that is running, as data. The web panel and the
+    terminal view both render this, so the two can never disagree about a number."""
     summary = timeline_only(run)
     state, state_class, is_live = run_state(run, summary)
+    facts = {"state": state, "state_class": state_class, "live": is_live, "phase": None}
     if not is_live:
-        return (f"<b class='{state_class}'>{esc(state)}</b> "
-                f"<span class=dim>Reload for the final table.</span>")
+        return facts
+    facts["server"] = server.status()
     step = live_step(run)
     if not step or not step[0]:
-        return ("<b>Between phases.</b> <span class=dim>No pi process is open.</span>"
-                + server_html(server.status()))
+        return facts
     n, name, started = step
     tail = tail_for(run, n)
     stale = staleness(run, n)
     began = parse_ts(started)
-    elapsed = (time.time() - began.timestamp()) if began else None
-    threshold = danger_line([timeline_only(r) for r in runs()])
-    per_min = rate(run, n)
-    stale_class = "bad" if stale is not None and stale > STALE_SECONDS else "dim"
-    # The ceiling is pi's contextWindow for the model styre runs — what the agent is told
-    # it has — not the server's advertised maximum, which the server line shows separately.
-    window = (server.provider() or {}).get("context_window")
-    ceiling = f" <span class=dim>of {window:,}</span>" if window and tail.peak else ""
-    cells = [("phase", f"{n} <span class=dim>{esc(name or '')}</span>"),
-             ("running", fmt_seconds(elapsed)),
-             ("peak ctx", fmt_count(tail.peak) + ceiling),
-             ("ctx/min", "-" if per_min is None else f"{per_min:,.0f}"),
-             ("tok/s", fmt_rate(tail.tokens_per_second)),
-             ("last output", f"<span class={stale_class}>{fmt_seconds(stale)} ago</span>")]
+    facts.update(
+        phase=n, step=name,
+        elapsed=(time.time() - began.timestamp()) if began else None,
+        peak=tail.peak,
+        # The ceiling is pi's contextWindow for the model styre runs — what the agent is
+        # told it has — not the server's advertised maximum, which the server line shows.
+        window=(server.provider() or {}).get("context_window"),
+        per_min=rate(run, n),
+        tok_s=tail.tokens_per_second,
+        stale=stale,
+        stale_class="bad" if stale is not None and stale > STALE_SECONDS else "dim",
+        tool_errors=dict(sorted(tail.tool_errors.items())),
+        series=series(run, n),
+        threshold=danger_line([timeline_only(r) for r in runs()]),
+        log=log_tail(run, n),
+    )
+    return facts
+
+
+def live_html(run):
+    """The polled panel: what is happening in the phase that is running."""
+    f = live_facts(run)
+    if not f["live"]:
+        return (f"<b class='{f['state_class']}'>{esc(f['state'])}</b> "
+                f"<span class=dim>Reload for the final table.</span>")
+    if f["phase"] is None:
+        return ("<b>Between phases.</b> <span class=dim>No pi process is open.</span>"
+                + server_html(f["server"]))
+    ceiling = f" <span class=dim>of {f['window']:,}</span>" if f["window"] and f["peak"] else ""
+    cells = [("phase", f"{f['phase']} <span class=dim>{esc(f['step'] or '')}</span>"),
+             ("running", fmt_seconds(f["elapsed"])),
+             ("peak ctx", fmt_count(f["peak"]) + ceiling),
+             ("ctx/min", "-" if f["per_min"] is None else f"{f['per_min']:,.0f}"),
+             ("tok/s", fmt_rate(f["tok_s"])),
+             ("last output",
+              f"<span class={f['stale_class']}>{fmt_seconds(f['stale'])} ago</span>")]
     grid = "".join(f"<div><div class=dim>{k}</div><div class=big>{v}</div></div>"
                    for k, v in cells)
-    errors = ("<div class=dim>" + ", ".join(f"{v} failed {k} call(s)"
-                                            for k, v in sorted(tail.tool_errors.items()))
-              + "</div>") if tail.tool_errors else ""
-    return (f"<div class=grid>{grid}<div>{sparkline(series(run, n), threshold)}</div></div>"
-            f"{server_html(server.status())}{errors}<pre>{esc(log_tail(run, n))}</pre>")
+    errors = ("<div class=dim>" + errors_text(f["tool_errors"]) + "</div>"
+              if f["tool_errors"] else "")
+    return (f"<div class=grid>{grid}<div>{sparkline(f['series'], f['threshold'])}</div></div>"
+            f"{server_html(f['server'])}{errors}<pre>{esc(f['log'])}</pre>")
 
 
-def server_html(s):
-    """One line from the model server's /status. A quiet phase is either the model working,
-    a request queued behind memory, or a server that is not serving: this line says which."""
+def errors_text(tool_errors):
+    return ", ".join(f"{v} failed {k} call(s)" for k, v in tool_errors.items())
+
+
+def server_parts(s):
+    """The model server's /status as (text, class) pieces, or None when there is no line.
+    A quiet phase is either the model working, a request queued behind memory, or a server
+    that is not serving: this says which."""
     if not s:
-        return ""
+        return None
     if s.get("error"):
-        return f"<div class=bad>{esc(s['server'])}: {esc(s['error'])}</div>"
+        return [(s["error"], "bad")]
     parts = [("ready", "ok") if s["ready"] else ("not ready", "bad")]
     pressure = s.get("memory_pressure") or "?"
     parts.append((f"memory {pressure}", "dim" if pressure == "normal" else "warn"))
@@ -574,8 +603,92 @@ def server_html(s):
         parts.append(("nothing queued", "dim"))
     if s.get("max_context"):
         parts.append((f"server max ctx {s['max_context']:,}", "dim"))
+    return parts
+
+
+def server_html(s):
+    parts = server_parts(s)
+    if not parts:
+        return ""
+    if s.get("error"):
+        return f"<div class=bad>{esc(s['server'])}: {esc(s['error'])}</div>"
     return (f"<div><span class=dim>{esc(s['server'])}:</span> "
             + " · ".join(f"<span class={c}>{esc(t)}</span>" for t, c in parts) + "</div>")
+
+
+# --------------------------------------------------------------------------- terminal
+
+SPARK = "▁▂▃▄▅▆▇█"
+ANSI = {"ok": "\033[32m", "bad": "\033[31m", "warn": "\033[33m", "dim": "\033[90m",
+        "bold": "\033[1m"}
+RESET = "\033[0m"
+LOG_LINES = 12
+
+
+def text_sparkline(points, width=40):
+    """Context over time in block characters: the last `width` samples, scaled to the
+    phase's own peak. Enough to see whether context is still climbing."""
+    ys = [y for _, y in points][-width:]
+    if not ys:
+        return ""
+    top = max(ys) or 1
+    return "".join(SPARK[min(len(SPARK) - 1, int(y / top * (len(SPARK) - 1)))] for y in ys)
+
+
+def live_text(run, color=False):
+    """The live panel as terminal lines — the same facts as the web panel."""
+    def c(text, cls):
+        return f"{ANSI[cls]}{text}{RESET}" if color and cls in ANSI else text
+
+    f = live_facts(run)
+    head = c(f"styre watch · {run.id}", "bold")
+    if not f["live"]:
+        return [head, c(f["state"], f["state_class"]), c("Nothing is running.", "dim")]
+    lines = [head]
+    if f["phase"] is None:
+        lines.append("Between phases. " + c("No pi process is open.", "dim"))
+    else:
+        ceiling = f" of {f['window']:,}" if f["window"] and f["peak"] else ""
+        per_min = "-" if f["per_min"] is None else f"{f['per_min']:,.0f}"
+        lines += [
+            f"phase {f['phase']} {c(f['step'] or '', 'dim')} · running {fmt_seconds(f['elapsed'])}",
+            f"peak ctx {fmt_count(f['peak'])}{c(ceiling, 'dim')} · ctx/min {per_min} · "
+            f"tok/s {fmt_rate(f['tok_s'])} · "
+            f"last output {c(fmt_seconds(f['stale']) + ' ago', f['stale_class'])}",
+            c(text_sparkline(f["series"]), "dim"),
+        ]
+    parts = server_parts(f.get("server"))
+    if parts:
+        lines.append(c(f"{f['server']['server']}: ", "dim")
+                     + c(" · ", "dim").join(c(t, cls) for t, cls in parts))
+    if f.get("tool_errors"):
+        lines.append(c(errors_text(f["tool_errors"]), "dim"))
+    if f.get("log"):
+        lines.append("")
+        lines += [c(line, "dim") for line in f["log"].rstrip().splitlines()[-LOG_LINES:]]
+    return lines
+
+
+def terminal(run_id=None, interval=POLL_SECONDS, once=False):
+    """`styre watch --terminal`: the live panel in the terminal, redrawn every `interval`
+    seconds until ctrl-c. Follows the latest run unless given one, so it picks up a resume
+    without being restarted. Reads exactly what the web panel reads, and writes nothing."""
+    color = sys.stdout.isatty() and not os.environ.get("NO_COLOR")
+    try:
+        while True:
+            run = find_run(run_id) if run_id else latest_run()
+            lines = (live_text(run, color) if run else
+                     ["No runs under .styre/runs/ — run this from inside the target repository."])
+            if color:
+                sys.stdout.write("\033[H\033[2J")   # home and clear: a redraw, not a scroll
+            sys.stdout.write("\n".join(lines) + "\n")
+            sys.stdout.flush()
+            if once:
+                return 0
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        print()
+        return 0
 
 
 # --------------------------------------------------------------------------- serving

@@ -11,7 +11,7 @@ from styre.review import describe_review
 from styre.rundir import resolve
 from styre.runner import PreflightError, orchestrate, preflight
 from styre.summarize import summarize
-from styre.watch import DEFAULT_PORT, serve
+from styre.watch import DEFAULT_PORT, serve, terminal
 
 EXAMPLES = """examples:
   styre check design.md                 validate the design, print what it will run, and
@@ -21,6 +21,7 @@ EXAMPLES = """examples:
   styre summarize                       what happened in the last run
   styre summarize 20260920-233014       ... in a particular one
   styre watch                           read-only web view of this repo's runs, live
+  styre watch -t                        the same live panel, in this terminal
 
 Run it from inside the target repository: styre switches branches and commits there.
 """
@@ -103,8 +104,11 @@ def cmd_summarize(args):
 
 
 def cmd_watch(args):
-    """Serve the read-only view. It writes nothing, so there is no --dry-run and no
-    confirmation: the only thing it can do is show you the files that are already there."""
+    """Serve the read-only view, or draw its live panel in the terminal. It writes nothing,
+    so there is no --dry-run and no confirmation: the only thing it can do is show you the
+    files that are already there."""
+    if args.terminal:
+        return terminal(run_id=args.run, once=args.once)
     return serve(port=args.port)
 
 
@@ -160,6 +164,13 @@ def build_parser():
                                          "localhost, refreshing while a phase runs")
     watch.add_argument("--port", type=int, default=DEFAULT_PORT, metavar="PORT",
                        help=f"port to listen on (default {DEFAULT_PORT})")
+    watch.add_argument("--terminal", "-t", action="store_true",
+                       help="draw the live panel in this terminal instead of serving a page, "
+                            "redrawn every 2 s until ctrl-c")
+    watch.add_argument("--run", default=None, metavar="ID",
+                       help="with --terminal: follow this run (default: the latest)")
+    watch.add_argument("--once", action="store_true",
+                       help="with --terminal: print the panel once and exit")
     watch.set_defaults(func=cmd_watch)
     return ap
 
