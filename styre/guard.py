@@ -6,7 +6,6 @@ the arbiter of a phase, and this guard catches the cheapest way of making a red 
 import re
 import time
 
-from styre.acceptance import run_all
 from styre.gitops import stage_all, staged_diff
 from styre.process import run
 from styre.timeline import Timeline
@@ -45,15 +44,12 @@ def test_tampering(diff):
 
 
 def verify(phase, log, gate_timeout=None, allow_test_changes=False, timeline=None,
-           phase_n=None, step=None, acceptance=()):
+           phase_n=None, step=None):
     """Run the gate and the test guard. Return None when all pass, else (short reason, full report).
 
     `phase_n` and `step` only tag the timeline events. The reader could infer them from the
     preceding pi_end — the loop is serial — but a record that has to be reconstructed by
     inference is one more thing to get wrong later.
-
-    `acceptance` is [(phase n, Acceptance)] — every phase's hidden tests up to this one, run
-    after the gate commands and reported with them (see styre/acceptance.py).
     """
     tl = timeline or Timeline()
     # Every command runs, even after one fails. A gate that stopped at its first red command
@@ -75,20 +71,6 @@ def verify(phase, log, gate_timeout=None, allow_test_changes=False, timeline=Non
         print(f" → {verdict} ({time.monotonic() - started:.1f}s)", flush=True)
         if rc != 0:
             failures.append((cmd, rc, out))
-
-    def timed(cmd, shell, log, timeout):
-        print(f"    $ {cmd}", end="", flush=True)
-        started = time.monotonic()
-        with tl.span("gate", phase=phase_n, step=step, command=cmd, acceptance=True) as end:
-            rc, out = run(cmd, shell=shell, log=log, timeout=timeout)
-            end["rc"] = rc
-        print(f" → {'ok' if rc == 0 else f'FAILED (exit {rc})'} "
-              f"({time.monotonic() - started:.1f}s)", flush=True)
-        return rc, out
-
-    for label, rc, out in run_all(acceptance, timed, log, timeout=gate_timeout or None):
-        if rc != 0:
-            failures.append((label, rc, out))
     if failures:
         first = failures[0][0]
         more = f" (+{len(failures) - 1} more)" if len(failures) > 1 else ""
@@ -96,14 +78,10 @@ def verify(phase, log, gate_timeout=None, allow_test_changes=False, timeline=Non
         # share, the last lines kept, since a test run's reason is at its end.
         share = max(1500, GATE_REPORT_CHARS // len(failures))
         report = "\n\n".join(
-            (f"An acceptance test failed: `{cmd}` (exit code {rc}). These tests are the design "
-             "author's and you do not have them; fix the code so the behaviour they check is "
-             "right, from the output below. Output tail:\n" if cmd.startswith("acceptance") else
-             f"Gate command failed: `{cmd}` (exit code {rc}). Output tail:\n") + out[-share:]
+            f"Gate command failed: `{cmd}` (exit code {rc}). Output tail:\n{out[-share:]}"
             for cmd, rc, out in failures)
         if len(failures) > 1:
-            total = len(phase.gate) + sum(len(a.commands) for _, a in acceptance)
-            report = (f"{len(failures)} of the {total} gate commands failed. "
+            report = (f"{len(failures)} of the {len(phase.gate)} gate commands failed. "
                       "Fix all of them.\n\n" + report)
         return f"gate failed: {first[:60]}{more}", report
     if not allow_test_changes:

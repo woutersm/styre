@@ -180,12 +180,6 @@ def act(action, n):
         write_decisions(n)
         write_state(n)
         return
-    if action == "value2":  # what a fix round does once an acceptance test says 1 is wrong
-        Path(f"work{n}.py").write_text("value = 2\n", encoding="utf-8")
-        Path("done.txt").write_text("done\n", encoding="utf-8")
-        write_decisions(n)
-        write_state(n)
-        return
     # "ok"
     Path(f"work{n}.py").write_text(f"value = {n}\n", encoding="utf-8")
     Path("done.txt").write_text("done\n", encoding="utf-8")

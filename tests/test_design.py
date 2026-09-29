@@ -153,39 +153,8 @@ def test_a_subject_that_skips_is_not_a_skipped_test():
 
 
 def test_a_clean_design_gets_no_advisories():
-    text = design("A short preamble every phase needs.") + (
-        "\n### Acceptance\n```python tests/test_acceptance_x.py\ndef test_x():\n    pass\n```\n"
-        "```\npytest -q {files}\n```\n")
+    text = design("A short preamble every phase needs.")
     assert advisories(text, parse_phases(text), [1000]) == []
-
-
-def test_a_design_without_acceptance_tests_is_told_once():
-    text = design("A short preamble.")
-    notes = advisories(text, parse_phases(text), [1000])
-    assert len(notes) == 1 and notes[0].startswith("No phase has acceptance tests")
-
-
-def test_the_acceptance_section_is_cut_out_of_the_phase_and_parsed():
-    text = design("P.", body="Build it.") + (
-        "\n### Acceptance\n```python tests/test_acc.py\ndef test_it():\n    assert True\n```\n"
-        "```\nuv run pytest -q {files}\n```\n")
-    phase = parse_phases(text)[0]
-    assert "Acceptance" not in phase.body and "test_it" not in phase.body   # reaches no prompt
-    assert "test_it" not in phase_context(text, parse_phases(text), 1)
-    assert phase.acceptance.files == [("tests/test_acc.py", "def test_it():\n    assert True\n")]
-    assert phase.acceptance.commands == ["uv run pytest -q {files}"]
-    assert phase.gate == ["true"] and phase.criteria == ["criterion 0"]  # the rest is intact
-    assert validate(parse_phases(text)) == []
-
-
-def test_an_acceptance_section_that_cannot_run_is_an_error():
-    bad = design("P.") + ("\n### Acceptance\n```python ../outside.py\ndef broken(:\n```\n")
-    problems = validate(parse_phases(bad))
-    assert any("has no command" in p for p in problems)
-    assert any("must be a path inside the repo" in p for p in problems)
-    syntax = design("P.") + ("\n### Acceptance\n```python tests/t.py\ndef broken(:\n```\n"
-                             "```\npytest {files}\n```\n")
-    assert any("does not parse" in p for p in validate(parse_phases(syntax)))
 
 
 def test_phases_gated_in_two_toolchains_are_named_once():

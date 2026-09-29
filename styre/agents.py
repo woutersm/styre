@@ -61,10 +61,6 @@ spend a fix round on it.
   this phase, and reading it spends the context you need for the work. Write exactly the
   files named below there, and nothing else — no listing it, no looking for another phase's
   state file to copy. The formats you need are below, in full.
-- **Do not open the design document your phase was cut from.** Everything your phase needs
-  from it — the preamble, the list of phases and your phase in full — is in your prompt. The
-  rest is other phases' work, and it is not all meant for you: the gate may run tests the
-  design's author wrote and kept from you on purpose.
 - **Tool output is capped.** A `read` returns at most 300 lines and a command's output keeps
   its first and last lines; a note says what was left out and how to get it. Read ranges and
   narrow commands instead of asking for everything.

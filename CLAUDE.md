@@ -22,7 +22,6 @@ committed on a red gate.
 | `styre/design.py` | Parsing a design into `Phase` objects; `preamble()` and `phase_context()`; `validate()` (errors) and `advisories()` / `doc_references()` (warnings); the `check` rendering. |
 | `styre/review.py` | `find_references()` / `describe_review()`: the second half of `check`, and what `run` calls automatically before phase 1 and after every commit. For every backtick-quoted identifier a phase names, greps the target repo's test-shaped files for existing references — the mechanical half of catching a phase that collides with a frozen test fixture, before a run starts rather than after a timeout. A name with more than `MAX_HITS` hits is dropped as a local variable or a library, not a collision. |
 | `styre/touch.py` | Claude as the escape hatch — see "The supervising layer". `run_claude()`, `touch_prompt()`, `touch()`: one turn at a stuck phase. Invoked only by `runner.py`'s `_escalate()`, only when `--claude-touch` is passed. |
-| `styre/acceptance.py` | The design author's hidden tests: `split()` cuts a phase's `### Acceptance` section out at parse time, `problems()` validates it, `run_all()` writes, runs and deletes its files inside `verify()`. |
 | `styre/prompts.py` | `build_prompt()`, `fix_prompt()` (a fresh fix round), `resumed_fix_prompt()` (a resumed one), `handoff_prompt()` (a stopped step writes its progress file) and `relay_prompt()` (a fresh start for context). |
 | `styre/pi_extensions/` | The pi extensions every pi process gets with `--extension`: `cap-output.js`, `no-compaction.js`, `strip-thinking.js`. See "Context". Unit-tested in Node by `tests/test_pi_extensions.py`. |
 | `styre/agents.py` | `AGENTS_BODY`, the block written into the target repo's `AGENTS.md`. |
@@ -74,29 +73,6 @@ Exit criteria are plain prose for the agent. The **gate** is what the orchestrat
 Both are written by the human, in the design. A phase with no criteria list or no gate block
 is a hard error.
 
-A phase may also carry an **`### Acceptance`** section: tests the design's author wrote, which
-the agent never sees (`styre/acceptance.py`, 2026-09-29). A fenced block whose info string
-names a path is a test file; one without is the command, `{files}` standing for the paths:
-
-````markdown
-### Acceptance
-```python tests/test_acceptance_calendar.py
-def test_a_weekly_event_is_one_row_per_week(): ...
-```
-```
-uv run pytest -q {files}
-```
-````
-
-The section is cut out of the phase when the design is parsed, so it reaches no prompt. The
-gate writes the files, runs the command after the gate's own commands, and deletes them
-before anything is staged: never committed, never present while the agent works. A phase
-runs its own acceptance tests and every earlier phase's. A failure's output goes into the fix
-prompt, labelled as tests the agent does not have. They are frozen when the run starts, so a
-Claude touch that patches the design cannot weaken them. A path the tree already holds is
-never overwritten. Optional per phase; `check` says when a design has none, and when the
-design sits inside the repo, where the agent could open it (`AGENTS.md` tells it not to).
-
 That is the format. **`writing-designs.md` is the shape** — how big a phase may be, where to
 cut one so its gate is green on its own work, and why the rename-everything phase goes last.
 Read it before writing or splitting a design; the failures it describes are ones that only
@@ -145,8 +121,7 @@ show up hours into a night.
    contract stays a stable path it can be told about in a committed `AGENTS.md`, which cannot
    name a run id.
 5. On `DONE`, the orchestrator runs each gate command itself (`--gate-timeout`, default 900 s),
-   printing each one before it starts and its verdict and duration after, then the hidden
-   acceptance tests of this phase and every earlier one.
+   printing each one before it starts and its verdict and duration after.
 6. It then runs a test-tampering guard over the staged diff: added skip/xfail markers, or a
    net removal of test functions, fail the phase. Disable with `--allow-test-changes`.
 7. Any failure is fed back as a fix round, up to `--retries` (default 2): the whole gate's
@@ -539,8 +514,8 @@ Things worth keeping right:
   commit on red.
 - Agents game weak tests — deleted assertions, skip markers, hard-coded returns. SpecBench
   measured 97% on visible tests against 0% on held-out tests for a hard-coded lookup table.
-  Held-out tests kept from the agent and run by the gate are the strongest defence; since
-  2026-09-29 a design's `### Acceptance` sections are exactly that.
+  Held-out tests kept outside the repo and invoked from a gate command are the strongest
+  defence; they are not built.
 
 ## Keep it simple
 
@@ -612,7 +587,7 @@ are not complexity to be trimmed. Everything else is.
 - Cross-platform: pathlib, no POSIX-only shell syntax inside the package. (The end-to-end
   tests' own fixture gate uses `test -f`, so they skip on Windows.)
 
-Parked, ask before adding: spend/time budgets, placeholder scan,
+Parked, ask before adding: hidden held-out tests, spend/time budgets, placeholder scan,
 parallel phases, run notifications, a run-level circuit breaker on repeated Claude
 escalations (considered 2026-09-21, not needed yet).
 
