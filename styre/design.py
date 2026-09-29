@@ -45,16 +45,19 @@ NOT_RE = re.compile(r"\b(do not|don't|never|no need to|rather than|instead of|wi
 READ_WINDOW = 160
 NEGATION_WINDOW = 40
 MANY_CRITERIA = 8
-# A path a phase names in backticks: a file with an extension, or a directory with a slash.
-PATH_RE = re.compile(r"`((?:[\w.\-$]+/)+[\w.\-$]*|[\w.\-$]+\.[a-z]{1,5})`")
-# Where a phase's own work goes, not what it reads or proves itself with: tests, fixtures and
-# documents come with every phase and say nothing about its spread.
-NOT_AREAS = {"tests", "test", "docs", "fixtures"}
-# The spread that ran largest (2026-09-27/28): app's web-edit phase 3 (API + UI + README, 105k
-# context, compacted) and sources phase 3 (source + API + UI + briefing, 115k, three hours) both
-# named paths in two or more top-level areas and four or more paths; the phases that went
-# through stayed in one area or named fewer.
-SPREAD_AREAS, SPREAD_PATHS = 2, 4
+# A phase gated by two toolchains at once — the gate runs in the root *and* in `cd ui` — is
+# a phase that changes a backend and the UI that shows it. Measured over app's 44 phases with
+# a design on record (2026-09-29): 6 of the 7 such phases peaked at 74-116k context, past the
+# 72k relay line, and the seventh (a UI shell) at 47k. It is said once, naming the phases:
+# on app every UI phase is one, and a warning per phase would be read as noise. The heuristic
+# this replaced — paths in 2+ top-level areas — flagged 12 phases of which 6 ran large.
+FULL_STACK = 2
+# A dependency the design names (on a line saying "depend…", or in `uv add`/`npm install`)
+# and the repo does not have yet. On app's sources phase 3 the design named `icalendar` and
+# gave no example of it, and each of four steps spent ~12 `python -c` calls learning its API.
+DEPENDS_RE = re.compile(r"depend", re.I)
+INSTALL_RE = re.compile(r"\b(?:uv add|pip install|npm install|npm i|pnpm add|yarn add)\s+([^\n`]+)")
+TICKED_RE = re.compile(r"`([@\w][\w./@-]*)`")
 # The test guard rejects an added skip or xfail marker, so a design that *asks* for one has
 # written a phase that cannot pass its own verification. Measured 2026-09-23: app's phase
 # 12 said "skip on non-macOS as `tests/test_scripts.py` already does", the agent did
@@ -182,25 +185,55 @@ def skip_requests(text):
     return None
 
 
-def spread(body):
-    """(areas, paths) a phase body names: the top-level directories its own work touches, and
-    the distinct paths. A bare file name counts in the area "." (the repository root)."""
-    # The description only: exit criteria and the gate name what the phase is checked with
-    # (`scripts/shot.mjs on /`), not where its work goes.
-    body = re.split(r"(?m)^###\s+Exit criteria", body)[0]
-    paths = {m.group(1) for m in PATH_RE.finditer(body)}
-    # A capitalised name without an extension is not a path: `Email/query` is a JMAP method.
-    # With one it is — `EditTodo.tsx` is a component file.
-    paths = {p for p in paths if p.split("/")[0] not in NOT_AREAS and not p.endswith(".md")
-             and not (p[:1].isupper() and "." not in p.rsplit("/", 1)[-1])}
-    areas = {p.split("/")[0] if "/" in p else "." for p in paths}
-    return sorted(areas), sorted(paths)
+def toolchains(phase):
+    """The directories a phase's gate runs in: "." for a plain command, X for `cd X && …`."""
+    where = set()
+    for command in phase.gate:
+        m = re.match(r"\s*cd\s+(\S+)\s*(?:&&|;)", command)
+        where.add(m.group(1).rstrip("/") if m else ".")
+    return sorted(where)
 
 
-def advisories(text, phases, sizes, design_path=""):
+def _norm(name):
+    return name.lower().replace("_", "-")
+
+
+def installed(root):
+    """What the repository already depends on, normalised: the text of every pyproject.toml
+    and package.json near the root, which is plenty to ask "is this name in there"."""
+    files = [root / "pyproject.toml", *root.glob("package.json"), *root.glob("*/package.json")]
+    return "\n".join(_norm(f.read_text(encoding="utf-8", errors="replace"))
+                     for f in files if f.is_file())
+
+
+def declared(text):
+    """Package names the design says it will add, normalised."""
+    names = set()
+    for line in text.splitlines():
+        if DEPENDS_RE.search(line):
+            names |= {_norm(m) for m in TICKED_RE.findall(line)}
+        for m in INSTALL_RE.finditer(line):
+            names |= {_norm(w) for w in m.group(1).split() if not w.startswith("-")}
+    return names
+
+
+def new_dependencies(text, phase, have):
+    """Declared packages this repo lacks, that this phase uses without a code example of them.
+    A package counts as used when the description names it (`recurring_ical_events.of(…)`);
+    an example is a fenced block in the description that mentions it."""
+    body = re.split(r"(?m)^###\s+Exit criteria", phase.body)[0]
+    blocks = _norm(" ".join(re.findall(r"```.*?```", body, re.S)))
+    prose = _norm(re.sub(r"```.*?```", "", body, flags=re.S))
+    return sorted(n for n in declared(text)
+                  if n not in have and re.search(rf"(?<![\w-]){re.escape(n)}(?![\w-])", prose)
+                  and n not in blocks)
+
+
+def advisories(text, phases, sizes, design_path="", root=None):
     """Things that make a design risky without making it unrunnable, so `check` can say them
     before a night is spent rather than after. `sizes` is each phase's prompt length in
-    bytes, parallel to `phases`."""
+    bytes, parallel to `phases`. `root` is the target repository, for what it already
+    depends on; without it that check is skipped."""
     out = []
     pre = doc_references(preamble(text), design_path)
     if pre:
@@ -237,13 +270,20 @@ def advisories(text, phases, sizes, design_path=""):
         if why:
             out.append(f"Phase {i} is large — " + " and ".join(why)
                        + ". A phase whose title says \"and\" is usually two phases.")
+    wide = [i for i, phase in enumerate(phases, 1) if len(toolchains(phase)) >= FULL_STACK]
+    if wide:
+        out.append(f"Phase(s) {', '.join(map(str, wide))} are gated in more than one toolchain "
+                   "(a backend and its UI).\n    Such phases peaked at 74-116k context here, past "
+                   "the relay line: expect fresh starts,\n    and keep anything else — a new "
+                   "source, a new library — out of them.")
+    have = installed(root) if root is not None else None
     for i, phase in enumerate(phases, 1):
-        areas, paths = spread(phase.body)
-        if len(areas) >= SPREAD_AREAS and len(paths) >= SPREAD_PATHS:
-            named = ", ".join(f"{a}/" if a != "." else "the root" for a in areas)
-            out.append(f"Phase {i} spreads across {named} ({len(paths)} paths). Phases that reach "
-                       "into several parts of the repo at once ran largest; one phase per part "
-                       "keeps each context small.")
+        new = new_dependencies(text, phase, have) if have is not None else []
+        if new:
+            out.append(f"Phase {i} uses " + ", ".join(f"`{n}`" for n in new)
+                       + ", which this repo does not depend on yet, with no example.\n"
+                       "    The agent will learn its API by trial. Put a short usage snippet "
+                       "in the phase: the calls, and what they return.")
     return out
 
 

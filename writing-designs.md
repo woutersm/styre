@@ -8,6 +8,24 @@ goes in it. Every rule below cost a night, and each one names the run it came fr
 agent at a document, for the reason in CLAUDE.md under "Prompt size". This is for whoever
 writes the design, before the run.
 
+## The workflow
+
+Six steps, in this order. Each one exists because skipping it cost a night.
+
+1. **Grill the intent.** What it does, what it must not do, what the tests fake. Decisions
+   go into the preamble, and only what *every* phase needs goes there — it ships to each one.
+2. **Cut the phases** by the rules below: fill a table *or* show it; the gate green on each
+   phase alone; the ripple last. Write each phase self-contained — no "read X first".
+3. **Fix every external shape in the text**: the API's request and response, and for a new
+   library the calls and what they return. Anything the design leaves out, the agent learns
+   by trial inside the phase, at context and thinking cost, again in every fresh start.
+4. **Estimate each phase's work**: `grep -rn` the names it changes, count the files it must
+   open. A phase gated by both a backend and a UI peaks at 74-116k here; nothing else goes in it.
+5. **Prove it before the night**: run the DDL and every new gate command once by hand, then
+   `styre check` until nothing in "Worth a look" is a surprise.
+6. **After the run**, read `styre summarize` against the table at the end of this file, change
+   the *design*, commit that change on its own, and resume with `--from-phase`.
+
 ## The unit of a phase is work, not prose
 
 A phase's prompt is not what fills its context. Measured on app run `20260923-211043`
@@ -93,6 +111,32 @@ When an early phase touches a module that a later phase reworks, say so and boun
 *"do the minimum that makes the gate green; reshaping the matcher is Phase 7's job."*
 Otherwise the work is done twice, and the first time is the one that runs out of memory.
 
+## Fill a table or show it, never both in one phase
+
+app's sources design (2026-09-28) split Strava this way — phase 1 the table and the job, phase
+2 the day page — and both committed first try. Its calendar phase did both at once (a CalDAV
+client, the config, the job, the day API, the briefing and the UI), hit the 72k relay line four
+times in 3h38m, and stopped with nothing committed. Split, the source half was already 80%
+written by the stopped attempt.
+
+The measured reason: across app's 44 phases with a design on record, **6 of the 7 phases
+gated in both the root and `cd ui` peaked at 74-116k context** — past the relay line on their
+own. A UI phase is expensive before anything else is added to it, so add nothing else to it.
+`styre check` names these phases in one line.
+
+## A new library comes with its API in the design
+
+The same calendar phase named `icalendar` and `recurring-ical-events` in the preamble and gave
+the CalDAV XML to the byte, but not one line of the library. Each of its four steps spent ~12
+`python -c` calls — `dir()`, `inspect.signature`, trial parses — learning the same API, and a
+local model thinks hard while it guesses: 80% of that phase's output was thinking.
+
+So a phase that uses a dependency the repo does not have yet carries a 10-15 line snippet:
+the imports, the calls in the order the phase makes them, and what each returns — including
+the traps (a floating `datetime`, a bare `date` for all-day). Run the snippet once before you
+paste it. `styre check` flags a declared, not-yet-installed package that a phase names without
+a code block mentioning it.
+
 ## Say what the phase must not touch
 
 "Nothing outside `src/app/db.py` and `src/app/store.py` is edited" is an exit criterion, is
@@ -129,6 +173,7 @@ the current tree so the phase does not open on a failure it did not cause.
 | gate still red after `--retries` | the design contradicts the repo — a fixture, a frozen assertion, a name already taken | patch the design, not the phase; `styre check`'s reference review is where this shows up before the run |
 | guard rejected the diff | the design asked for a skip marker, or for deleting tests | reword the criterion; the guard outranks the human here by design |
 | timed out while still printing | memory thrash on the host — forward progress stopped, output did not | the idle watchdog cannot see this one; it is the same fix as the first row |
+| "the context outgrew … tokens N times" | the phase does two jobs, or learns something the design should have said | split data from display; add the snippet for any library it probed (`python -c` in the log) |
 
 `styre summarize` is the input to all four. Read the peak context of the phase that failed
 and of the last one that worked: the difference is the size of the split you need.
@@ -140,3 +185,5 @@ and of the last one that worked: the difference is the size of the split you nee
 3. For each phase: would its gate be green with only that phase's work applied?
 4. Any phase naming more than a handful of modules is a ripple — is it late enough?
 5. Run the DDL and each new gate command once, by hand.
+6. Every new library a phase uses has a snippet in that phase, run once.
+7. No phase both fills a table and shows it.

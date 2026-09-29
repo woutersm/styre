@@ -59,7 +59,7 @@ def cmd_check(args):
     for n, (phase, size) in enumerate(zip(phases, sizes), 1):
         print(f"  {n:>3}. {size / 1024:>5.1f} KB  {len(phase.criteria)} criteria  {phase.title}")
 
-    notes = advisories(text, phases, sizes, args.design)
+    notes = advisories(text, phases, sizes, args.design, root=Path.cwd())
     if notes:
         print("\n--- Worth a look before you start ---")
         for note in notes:

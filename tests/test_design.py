@@ -157,21 +157,42 @@ def test_a_clean_design_gets_no_advisories():
     assert advisories(text, parse_phases(text), [1000]) == []
 
 
-def test_a_phase_that_spreads_across_the_repo_is_flagged():
-    """Measured on app (2026-09-27/28): the phases that ran largest named paths in two or more
-    top-level areas and four or more paths; the ones that went through did not."""
-    from styre.design import advisories, parse_phases, spread
-    wide = ("## Phase 1: Wide\n`src/app/api/app.py`, `src/app/api/models.py`, "
-            "`ui/src/components/TodoPage.tsx`, new `EditTodo.tsx`, tests.\n"
-            "### Exit criteria\n- `scripts/shot.mjs` on `/todo/1`: 0px\n### Gate\n```\npytest\n```\n")
-    narrow = ("## Phase 2: Narrow\n`src/app/api/`, the day page in `ui/`, tests.\n"
-              "### Exit criteria\n- it works\n### Gate\n```\npytest\n```\n")
-    methods = ("## Phase 3: Names\n`Email/query`, `Email/get`, `Mailbox/get` in `src/app/mail.py`.\n"
-               "### Exit criteria\n- it works\n### Gate\n```\npytest\n```\n")
-    phases = parse_phases(wide + narrow + methods)
-    assert spread(phases[0].body) == (
-        [".", "src", "ui"],
-        ["EditTodo.tsx", "src/app/api/app.py", "src/app/api/models.py", "ui/src/components/TodoPage.tsx"])
-    assert spread(phases[2].body) == (["src"], ["src/app/mail.py"])  # method names are not paths
-    notes = advisories("", phases, [1000, 1000, 1000])
-    assert [n.split(" spreads")[0] for n in notes if "spreads" in n] == ["Phase 1"]
+def test_phases_gated_in_two_toolchains_are_named_once():
+    """Measured on app (2026-09-29): 6 of the 7 phases gated in the root and in `cd ui` peaked
+    at 74-116k. Every UI phase there is one, so they are named in a single note."""
+    from styre.design import advisories, parse_phases, toolchains
+    def phase(n, gate):
+        return f"## Phase {n}: P{n}\nWork.\n### Exit criteria\n- it works\n### Gate\n```\n{gate}\n```\n"
+    text = (phase(1, "uv run pytest -q") + phase(2, "uv run pytest -q\ncd ui && npm run test")
+            + phase(3, "cd ui/ && npm run build\nuv run mypy src"))
+    phases = parse_phases(text)
+    assert [toolchains(p) for p in phases] == [["."], [".", "ui"], [".", "ui"]]
+    notes = [n for n in advisories(text, phases, [1000] * 3) if "toolchain" in n]
+    assert len(notes) == 1 and notes[0].startswith("Phase(s) 2, 3 are gated")
+
+
+def test_a_new_library_without_an_example_is_flagged(tmp_path):
+    """app sources phase 3 (2026-09-28): the design named `icalendar` as a dependency and
+    gave no example of it, and each of four steps spent ~12 `python -c` calls learning its API."""
+    from styre.design import advisories, parse_phases
+    (tmp_path / "pyproject.toml").write_text('dependencies = ["httpx>=0.27"]\n')
+    (tmp_path / "ui").mkdir()
+    (tmp_path / "ui" / "package.json").write_text('{"dependencies": {"react": "19"}}')
+    pre = "| Dependencies | `icalendar`, `recurring-ical-events`; the rest is `httpx` |\n\n"
+    bare = ("## Phase 1: Calendar\nExpand with `recurring_ical_events.of(cal).between(a, b)`, "
+            "parse with `icalendar.Calendar.from_ical`, fetch with `httpx`.\n"
+            "### Exit criteria\n- it works\n### Gate\n```\npytest\n```\n")
+    shown = ("## Phase 2: Calendar again\nUse `icalendar`:\n```python\n"
+             "from icalendar import Calendar\ncal = Calendar.from_ical(data)\n```\n"
+             "### Exit criteria\n- it works\n### Gate\n```\npytest\n```\n")
+    later = ("## Phase 3: Chart\nRun `npm install recharts`, then draw it with `recharts`.\n"
+             "### Exit criteria\n- it works\n### Gate\n```\npytest\n```\n")
+    text = pre + bare + shown + later
+    notes = [n for n in advisories(text, parse_phases(text), [1000] * 3, root=tmp_path)
+             if "does not depend" in n]
+    assert [n.split(", which")[0] for n in notes] == [
+        "Phase 1 uses `icalendar`, `recurring-ical-events`",  # httpx is installed; phase 2 shows it
+        "Phase 3 uses `recharts`"]
+    assert advisories(text, parse_phases(text), [1000] * 3) == [n for n in advisories(
+        text, parse_phases(text), [1000] * 3) if "does not depend" not in n]  # no root: skipped
+
