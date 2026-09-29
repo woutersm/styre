@@ -84,3 +84,4 @@ class RunOptions:
     allow_dirty: bool = False
     reset_branch: bool = False
     claude_touch: bool = False  # opt-in: real, automatic spend against the Claude CLI
+    claude_review: bool = False  # opt-in: one read-only Claude review of the run's commits

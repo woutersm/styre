@@ -537,3 +537,49 @@ def test_a_resume_continues_only_a_run_of_the_same_design(styre, repo):
     assert run_dir(repo) != first
     r = styre("run", "other.md", "--quiet", "--from-phase", "2", "--allow-dirty")
     assert "starting a new run directory" not in r.stdout  # same design: continued
+
+
+# --- Claude's review: quality control after the gate, read-only ---------------------------
+
+def test_claude_review_writes_its_verdict_and_changes_nothing(styre, repo, commits, tmp_path):
+    record = tmp_path / "claude-argv.json"
+    r = styre("run", "design.md", "--quiet", "--claude-review",
+              env_extra={"FAKE_CLAUDE_ARGV": str(record)})
+    assert r.returncode == 0, r.stdout
+    review = (run_dir(repo) / "claude-review.md").read_text(encoding="utf-8")
+    assert review.startswith("# Verdict: FIX FIRST")
+    summary = (run_dir(repo) / "summary.md").read_text(encoding="utf-8")
+    assert "**Claude's review: FIX FIRST**" in summary
+    argv = json.loads(record.read_text())
+    assert argv[argv.index("--tools") + 1] == "Read,Grep,Glob,Bash"   # no Edit, no Write
+    assert "--dangerously-skip-permissions" not in argv
+    assert "Bash(git diff:*)" in argv and "Bash" not in argv[argv.index("--allowedTools"):argv.index("--")]
+    prompt = argv[-1]
+    base = [e for e in timeline(repo) if e["event"] == "commit"][0]["sha"]
+    assert f"{base}^.." in prompt and "design.md" in prompt
+    ends = [e for e in timeline(repo) if e["event"] == "claude_review_end"]
+    assert ends[0]["verdict"] == "FIX FIRST" and ends[0]["cost"] == 1.23
+    assert commits()[:2] == ["Phase 2: Second phase", "Phase 1: First phase"]  # nothing added
+
+
+def test_without_the_flag_there_is_no_review(styre, repo, commits, tmp_path):
+    record = tmp_path / "claude-argv.json"
+    styre("run", "design.md", "--quiet", env_extra={"FAKE_CLAUDE_ARGV": str(record)})
+    assert not record.exists() and not (run_dir(repo) / "claude-review.md").exists()
+
+
+def test_a_finished_run_can_be_reviewed_afterwards(styre, repo, commits):
+    styre("run", "design.md", "--quiet")
+    r = styre("claude-review")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "Claude's review: FIX FIRST" in r.stdout
+    assert (run_dir(repo) / "claude-review.md").exists()
+    assert "Claude's review: FIX FIRST" in styre("summarize").stdout
+
+
+def test_a_failed_review_does_not_fail_the_run(styre, repo, commits):
+    r = styre("run", "design.md", "--quiet", "--claude-review",
+              env_extra={"FAKE_CLAUDE_MODE": "review_error"})
+    assert r.returncode == 0, r.stdout
+    review = (run_dir(repo) / "claude-review.md").read_text(encoding="utf-8")
+    assert review.startswith("# Verdict: none — the review did not complete")

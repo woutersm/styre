@@ -20,8 +20,32 @@ import re
 import sys
 from pathlib import Path
 
+REVIEW = """# Verdict: FIX FIRST
+The tokeniser drops the last word.
+
+## Findings
+- **bug** · `work1.py:1` · the value is hard-coded · the test asserts the same constant · compute it
+
+## For the next design
+Say which input the value comes from.
+"""
+
+
+def review():
+    """A read-only review call: record the arguments, answer like the real CLI does."""
+    record = os.environ.get("FAKE_CLAUDE_ARGV")
+    if record:
+        Path(record).write_text(json.dumps(sys.argv[1:]), encoding="utf-8")
+    if os.environ.get("FAKE_CLAUDE_MODE") == "review_error":
+        print("Error: budget exceeded", file=sys.stderr)
+        sys.exit(1)
+    print(json.dumps({"result": REVIEW, "is_error": False, "total_cost_usd": 1.23,
+                      "session_id": "fake-review"}))
+
 
 def main():
+    if "--tools" in sys.argv:  # only the review restricts its tools
+        return review()
     prompt = sys.argv[-1]
     mode = os.environ.get("FAKE_CLAUDE_MODE", "implement")
 

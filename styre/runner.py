@@ -14,6 +14,7 @@ from pathlib import Path
 
 from styre import __version__
 from styre.agents import write_agents_file
+from styre.claude_review import claude_review
 from styre.config import (
     AGENTS,
     DECISIONS,
@@ -467,6 +468,10 @@ def orchestrate(design_path, opts, run):
             with open(run.review, "a", encoding="utf-8") as f:
                 f.write(f"\n# Review after phase {n}\n\n{describe_review(ctx.phases[n:])}\n")
 
+    if opts.claude_review and committed:
+        # After the last phase and before run_end, so the summary below carries the verdict.
+        # It reviews what this run committed, whether or not a later phase stopped.
+        claude_review(run, tl, log=run.root / "logs" / "claude-review.log")
     tl.event("run_end", exit_code=1 if stopped else 0, committed=committed, stopped=stopped)
     # The run's own report is `summarize`'s, read back off the timeline it just wrote: the
     # numbers are measured rather than accumulated as we went, and there is one report

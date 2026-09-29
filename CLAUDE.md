@@ -21,6 +21,7 @@ committed on a red gate.
 | `styre/config.py` | Constants (`PI`, `PI_CONFIG_DIR`, `CLAUDE`, `WORK`, `DECISIONS`, `AGENTS`, `EXCLUDES`) and the `RunOptions` bundle. |
 | `styre/design.py` | Parsing a design into `Phase` objects; `preamble()` and `phase_context()`; `validate()` (errors) and `advisories()` / `doc_references()` (warnings); the `check` rendering. |
 | `styre/review.py` | `find_references()` / `describe_review()`: the second half of `check`, and what `run` calls automatically before phase 1 and after every commit. For every backtick-quoted identifier a phase names, greps the target repo's test-shaped files for existing references — the mechanical half of catching a phase that collides with a frozen test fixture, before a run starts rather than after a timeout. A name with more than `MAX_HITS` hits is dropped as a local variable or a library, not a collision. |
+| `styre/claude_review.py` | Claude's read-only review of a finished run — see "The supervising layer". `claude_review()` writes `<run>/claude-review.md`; `CLAUDE_REVIEW` is the verified read-only invocation. |
 | `styre/touch.py` | Claude as the escape hatch — see "The supervising layer". `run_claude()`, `touch_prompt()`, `touch()`: one turn at a stuck phase. Invoked only by `runner.py`'s `_escalate()`, only when `--claude-touch` is passed. |
 | `styre/prompts.py` | `build_prompt()`, `fix_prompt()` (a fresh fix round), `resumed_fix_prompt()` (a resumed one), `handoff_prompt()` (a stopped step writes its progress file) and `relay_prompt()` (a fresh start for context). |
 | `styre/pi_extensions/` | The pi extensions every pi process gets with `--extension`: `cap-output.js`, `no-compaction.js`, `strip-thinking.js`. See "Context". Unit-tested in Node by `tests/test_pi_extensions.py`. |
@@ -158,13 +159,15 @@ styre summarize                        # what happened in the last run
 styre summarize 20260920-233014        # ... or a named one, by id or by path
 styre watch                            # read-only web view on localhost, live
 styre watch -t                         # the same live panel in the terminal
+styre claude-review                    # Claude reviews the last run's commits, read-only
 ```
 
 Other flags on `run`: `--quiet` (no live echo to the terminal; the log is still written
 live), `--retries`, `--timeout`, `--gate-timeout`,
 `--allow-test-changes`, `--branch` (default `overnight/<design-stem>`), `--allow-dirty`,
 `--reset-branch`, `--run-id`, `--claude-touch` (see "The supervising layer" — off by
-default, real automatic spend against the `claude` CLI when it is on).
+default, real automatic spend against the `claude` CLI when it is on), `--claude-review`
+(the same layer, after the last phase: a read-only review, at most $5).
 
 `orchestrate.py` still works, translating the old single-command form onto the subcommands
 with a deprecation notice on stderr.
@@ -432,6 +435,7 @@ kill. Every line carries `ts` and `event`.
 | `guard_result` | `ok`, `problem` |
 | `commit` | `phase`, `sha`, `subject` |
 | `phase_end` | `phase`, `status` (`committed`/`stopped`), `reason`, `rounds`, `fix_rounds_self`, `unmet_criteria` |
+| `claude_review_start` / `_end` | `base`, `head`, and on end `seconds`, `rc`, `ok`, `cost`, `verdict` |
 | `run_end` | `exit_code`, `committed`, `stopped` |
 
 Everything in it is measured here — durations, return codes, the sha — never taken from the
@@ -538,7 +542,10 @@ are not complexity to be trimmed. Everything else is.
 - Serial: one agent works at a time, pi or Claude, never both at once — no parallel agents.
   Claude gets one turn at a stuck phase and may patch the design and write it; see "The
   supervising layer." (Decided 2026-09-21 — this replaces the earlier blanket "no reviewer
-  agent." Collapsed from a two-touch ladder to one touch on 2026-09-22.)
+  agent." Collapsed from a two-touch ladder to one touch on 2026-09-22.) Since 2026-09-29
+  Claude may also review a finished run, read-only, once: the operator's call, "quality
+  control by a higher-order agent" being the piece the gate cannot supply. It judges and
+  never acts — never per phase, never mid-run, never a commit.
 - The agent's claim of success is never trusted; the gate is the arbiter.
 - One commit per phase, no tags — the commit is the rollback point.
 - Per-run timeout stays: a hung pi process is the failure that stalls a whole night. It is
@@ -1103,6 +1110,19 @@ process, no memory of an earlier one. This mirrors the exact reasoning that gave
 fresh process per phase in the first place (see "Why it is built this way"): a single
 sprawling supervising conversation accumulating context across many interventions in one run
 would reintroduce, one layer up, the problem that design was built to avoid.
+
+**The review: once per run, after the last phase, read-only** (`styre/claude_review.py`,
+`run --claude-review` or `styre claude-review [run]`, 2026-09-29). The gate proves the code
+agrees with the tests the local model wrote itself; the EditTodo bug of 2026-09-27 shipped
+behind such a gate and was found only by reading the code. One `claude -p` reads the design,
+`summary.md` and `git diff <first phase commit>^..<last>`, and answers with a verdict (MERGE /
+FIX FIRST / REDO), up to 15 ranked findings with `path:line`, and what the next design should
+say. It is written to `<run>/claude-review.md`; `summarize` puts the verdict at the top of
+"Where to look". The invocation is `CLAUDE_REVIEW`: `--tools Read,Grep,Glob,Bash`,
+`--allowedTools` limited to those and `git log/diff/show`, no `--dangerously-skip-permissions`,
+`--max-budget-usd 5`, a 30-minute cap. **Verified live**: a `touch` through Bash came back in
+`permission_denials` and no file appeared. Nothing is fixed, committed or re-run on its
+account, and a failed review never fails the run: merging stays a human's decision.
 
 **Deliberately not built:** a run-level circuit breaker — see "Decisions that are settled"
 and the parked list.

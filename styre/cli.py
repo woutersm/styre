@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 from styre import __version__
+from styre.claude_review import claude_review
 from styre.config import DEFAULT_GATE_TIMEOUT, DEFAULT_RETRIES, DEFAULT_TIMEOUT, RunOptions
 from styre.design import advisories, describe, parse_phases, phase_context, validate
 from styre.prompts import build_prompt
@@ -11,6 +12,7 @@ from styre.review import describe_review
 from styre.rundir import RUNS, resolve
 from styre.runner import PreflightError, context_budget, orchestrate, preflight
 from styre.summarize import history_lines, repo_history, summarize
+from styre.timeline import Timeline
 from styre.watch import DEFAULT_PORT, serve, terminal
 
 EXAMPLES = """examples:
@@ -90,6 +92,7 @@ def cmd_run(args):
         allow_dirty=args.allow_dirty,
         reset_branch=args.reset_branch,
         claude_touch=args.claude_touch,
+        claude_review=args.claude_review,
     )
     try:
         run = preflight(args.design, opts)
@@ -105,6 +108,17 @@ def cmd_summarize(args):
                  "No runs found under .styre/runs/.")
     print(summarize(run))
     print(f"[styre] written to {run.root / 'summary.md'}")
+    return 0
+
+
+def cmd_claude_review(args):
+    run = resolve(args.run)
+    if run is None:
+        sys.exit(f"No such run: {args.run}." if args.run else
+                 "No runs found under .styre/runs/.")
+    (run.root / "logs").mkdir(exist_ok=True)
+    verdict = claude_review(run, Timeline(run.timeline), log=run.root / "logs" / "claude-review.log")
+    print(f"[styre] {verdict}")
     return 0
 
 
@@ -158,7 +172,17 @@ def build_parser():
                      help="on a stop, give Claude (via `claude -p`) one turn at the stuck "
                           "phase before giving up — real, automatic spend against the "
                           "Claude CLI; off by default")
+    run.add_argument("--claude-review", action="store_true",
+                     help="after the last phase, have Claude review the run's commits "
+                          "read-only and write <run>/claude-review.md — real, automatic "
+                          "spend (at most $5); off by default")
     run.set_defaults(func=cmd_run)
+
+    review = sub.add_parser("claude-review", help="have Claude review a finished run's commits, "
+                                                  "read-only (real spend, at most $5)")
+    review.add_argument("run", nargs="?", default=None, metavar="RUN",
+                        help="a run id or directory (default: the latest run)")
+    review.set_defaults(func=cmd_claude_review)
 
     summary = sub.add_parser("summarize", help="report what happened in a run")
     summary.add_argument("run", nargs="?", default=None, metavar="RUN",
