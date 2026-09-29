@@ -95,7 +95,7 @@ def touch(ctx, n, why_stopped):
         ctx.reload()  # every later phase gets the fixed design, not the one that failed
         phase = ctx.phase(n)
 
-    failure = verify(phase, log, gate_timeout=ctx.opts.gate_timeout,
+    failure = verify(phase, log, gate_timeout=ctx.opts.gate_timeout, acceptance=ctx.acceptance(n),
                      allow_test_changes=ctx.opts.allow_test_changes, timeline=ctx.tl,
                      phase_n=n, step="touch")
     if failure:

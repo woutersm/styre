@@ -163,6 +163,26 @@ Line ranges go stale as earlier phases edit the file; that is fine — a range t
 off is still a better start than a whole-file read. Keep it to what the phase edits and the
 one test it should copy from, not everything it might look at.
 
+## Write the acceptance tests yourself
+
+Every test the gate runs is otherwise one the agent wrote, against fixtures it also wrote,
+from its own reading of the design: a green gate proves it agrees with itself. The EditTodo
+bug of 2026-09-27 shipped behind exactly such a gate. An `### Acceptance` section per phase
+(format in CLAUDE.md) is a test the agent never sees and the gate still runs.
+
+- **Test at the boundary the design names**: the HTTP route and its JSON, the CLI and its
+  output, the table and its rows. Not internal helpers — the agent chooses those, and a test
+  of a function it did not know it had to write is a test of your guess, not of its work.
+- **The design must name what the test calls.** If the test does `GET /api/week?start=…`,
+  the phase says that route exists and what it returns. A hidden test of an unstated
+  contract fails for a reason the fix round can only guess at.
+- **Two to five tests per phase**, each one a criterion made executable. The agent still
+  writes its own tests; these are the few that decide whether the phase does what you meant.
+- **Run them once against a stub before the night** — at least that they import and fail for
+  the right reason — so a phase does not fail on a typo in your test.
+- **Keep the design outside the repo** when it carries acceptance tests. `AGENTS.md` tells
+  the agent not to open the design, but only a path it cannot reach makes that certain.
+
 ## Say what the phase must not touch
 
 "Nothing outside `src/app/db.py` and `src/app/store.py` is edited" is an exit criterion, is
@@ -214,3 +234,4 @@ and of the last one that worked: the difference is the size of the split you nee
 6. Every new library a phase uses has a snippet in that phase, run once.
 7. No phase both fills a table and shows it.
 8. Every phase has a **Where** list of the files it edits, with line ranges.
+9. Every phase has 2-5 acceptance tests at its boundary, run once against a stub.

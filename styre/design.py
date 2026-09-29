@@ -24,6 +24,11 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
+
+from styre.acceptance import Acceptance
+from styre.acceptance import problems as acceptance_problems
+from styre.acceptance import split as split_acceptance
 
 PHASE_RE = re.compile(r"(?m)^##\s+(Phase\s+\d+.*?)\s*$")
 # A markdown document named anywhere in the design, backticked or bare. Code paths are not
@@ -87,9 +92,10 @@ class Phase:
     """One '## Phase N: Title' block of the design."""
 
     title: str
-    body: str
+    body: str               # without its Acceptance section: that never reaches the agent
     criteria: list[str] = field(default_factory=list)
     gate: list[str] = field(default_factory=list)
+    acceptance: Acceptance | None = None
 
     @property
     def short_title(self):
@@ -103,6 +109,7 @@ def parse_phases(text):
     phases = []
     for i in range(1, len(parts), 2):
         title, body = parts[i].strip(), parts[i + 1].strip()
+        body, acceptance = split_acceptance(body)
         sections = SECTION_RE.split(body)
         named = {sections[j].strip().lower(): sections[j + 1] for j in range(1, len(sections), 2)}
         criteria = [ln.strip()[2:].strip() for ln in named.get("exit criteria", "").splitlines()
@@ -110,7 +117,8 @@ def parse_phases(text):
         block = FENCE_RE.search(named.get("gate", ""))
         gate = [ln.strip() for ln in (block.group(1) if block else "").splitlines()
                 if ln.strip() and not ln.strip().startswith("#")]
-        phases.append(Phase(title=title, body=body, criteria=criteria, gate=gate))
+        phases.append(Phase(title=title, body=body, criteria=criteria, gate=gate,
+                            acceptance=acceptance))
     return phases
 
 
@@ -134,6 +142,8 @@ def validate(phases):
                 for i, p in enumerate(phases, 1) if not p.criteria]
     problems += [f"Phase {i} has no '### Gate' code block."
                  for i, p in enumerate(phases, 1) if not p.gate]
+    for i, p in enumerate(phases, 1):
+        problems += acceptance_problems(i, p.acceptance)
     return problems
 
 
@@ -276,6 +286,22 @@ def advisories(text, phases, sizes, design_path="", root=None):
                    "(a backend and its UI).\n    Such phases peaked at 74-116k context here, past "
                    "the relay line: expect fresh starts,\n    and keep anything else — a new "
                    "source, a new library — out of them.")
+    with_tests = [i for i, p in enumerate(phases, 1) if p.acceptance]
+    without = [i for i, p in enumerate(phases, 1) if not p.acceptance]
+    if not with_tests and phases:
+        out.append("No phase has acceptance tests: every test the gate runs is one the agent "
+                   "wrote itself.\n    An `### Acceptance` section per phase is a test it "
+                   "never sees — see writing-designs.md.")
+    elif without:
+        out.append(f"Phase(s) {', '.join(map(str, without))} have no acceptance tests.")
+    if with_tests and root is not None and design_path:
+        try:
+            Path(design_path).resolve().relative_to(Path(root).resolve())
+            out.append("The design is inside the repository, so the agent can open it and read "
+                       "its acceptance tests.\n    AGENTS.md tells it not to; keep the design "
+                       "outside the repo to make that a guarantee.")
+        except ValueError:
+            pass
     have = installed(root) if root is not None else None
     for i, phase in enumerate(phases, 1):
         new = new_dependencies(text, phase, have) if have is not None else []
@@ -295,4 +321,8 @@ def describe(phases):
         out += [f"    - {c}" for c in p.criteria]
         out.append("  gate:")
         out += [f"    $ {c}" for c in p.gate]
+        if p.acceptance:
+            out.append("  acceptance (hidden from the agent): "
+                       + ", ".join(path for path, _ in p.acceptance.files))
+            out += [f"    $ {c}" for c in p.acceptance.commands]
     return "\n".join(out)

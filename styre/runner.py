@@ -108,6 +108,14 @@ class Ctx:
                   "one the run started with.", flush=True)
             return
         self.text, self.phases = text, phases
+        if not hasattr(self, "suites"):
+            # Frozen at the first read: a Claude touch may patch the design, and must not be
+            # able to weaken the hidden tests it is then held to.
+            self.suites = [(i, p.acceptance) for i, p in enumerate(phases, 1) if p.acceptance]
+
+    def acceptance(self, n):
+        """The hidden tests phase n's gate runs: its own and every earlier phase's."""
+        return [(i, a) for i, a in self.suites if i <= n]
 
     def phase(self, n):
         return self.phases[n - 1]
@@ -366,7 +374,7 @@ def run_phase(ctx, n):
                        "provider refused or dropped the request, so check the model host's "
                        f"log, not the agent. It then wrote nothing: {problem}")
             break
-        failure = verify(phase, log, gate_timeout=opts.gate_timeout,
+        failure = verify(phase, log, gate_timeout=opts.gate_timeout, acceptance=ctx.acceptance(n),
                          allow_test_changes=opts.allow_test_changes, timeline=tl,
                          phase_n=n, step=step)
         if failure is None:

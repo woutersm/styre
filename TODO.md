@@ -72,7 +72,7 @@ Write these down so they are not rediscovered at 3am. None is currently worth co
   config directory is missing, which was the real failure mode. A "reply with OK" probe
   would still catch a dead model host before phase 1. No `--skip-preflight`; a flag whose
   only sensible value is its default does not earn its place.
-- Hidden held-out tests, spend and time budgets, a placeholder scan, parallel phases, run
+- Spend and time budgets, a placeholder scan, parallel phases, run
   notifications, a run-level circuit breaker on repeated Claude escalations.
 
 ## Done

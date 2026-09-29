@@ -537,3 +537,68 @@ def test_a_resume_continues_only_a_run_of_the_same_design(styre, repo):
     assert run_dir(repo) != first
     r = styre("run", "other.md", "--quiet", "--from-phase", "2", "--allow-dirty")
     assert "starting a new run directory" not in r.stdout  # same design: continued
+
+
+# --- acceptance tests: the design author's, hidden from the agent ---------------------------
+
+ACCEPT = """
+### Acceptance
+```text acceptance/phase1_expected.txt
+value = 2
+```
+```
+diff -q {files} work1.py
+```
+"""
+
+
+def with_acceptance(repo, section=ACCEPT):
+    """Give design.md's phase 1 an Acceptance section, after its gate."""
+    design = repo / "design.md"
+    text = design.read_text(encoding="utf-8")
+    cut = text.index("## Phase 2")
+    design.write_text(text[:cut] + section + "\n" + text[cut:], encoding="utf-8")
+    import subprocess
+    subprocess.run(["git", "commit", "-qam", "acceptance"], cwd=repo, check=True)
+
+
+def test_an_acceptance_test_is_hidden_from_the_agent_and_its_failure_is_fixed(styre, repo, commits):
+    with_acceptance(repo)
+    r = styre("run", "design.md", "--quiet",
+              plan={"phase1.prompt.md": "ok", "phase1.fix1.md": "value2"})
+    assert r.returncode == 0, r.stdout
+    prompt = (run_dir(repo) / "phase1.prompt.md").read_text(encoding="utf-8")
+    assert "value = 2" not in prompt and "Acceptance" not in prompt   # never shown
+    fix = (run_dir(repo) / "phase1.fix1.md").read_text(encoding="utf-8")
+    assert "An acceptance test failed" in fix and "you do not have them" in fix
+    assert not (repo / "acceptance" / "phase1_expected.txt").exists()   # removed again
+    import subprocess
+    tracked = subprocess.run(["git", "ls-files"], cwd=repo, capture_output=True, text=True).stdout
+    assert "phase1_expected" not in tracked                               # never committed
+    assert commits()[:2] == ["Phase 2: Second phase", "Phase 1: First phase"]
+
+
+def test_a_later_phase_runs_the_earlier_acceptance_tests_too(styre, repo, commits):
+    with_acceptance(repo)
+    r = styre("run", "design.md", "--quiet", plan={"phase1.prompt.md": "value2",
+                                                   "phase2.prompt.md": "ok"})
+    # Phase 2's fake writes work2.py only, so phase 1's test still passes there: both commit.
+    assert r.returncode == 0, r.stdout
+    gates = [(e["phase"], e["command"]) for e in timeline(repo)
+             if e["event"] == "gate_end" and e.get("acceptance")]
+    assert [p for p, _ in gates] == [1, 2]
+    assert all("acceptance (phase" not in c for _, c in gates)            # the real command
+    assert all(c.startswith("diff -q acceptance/phase1_expected.txt") for _, c in gates)
+
+
+def test_the_agents_file_at_that_path_is_not_overwritten(styre, repo, commits):
+    with_acceptance(repo)
+    (repo / "acceptance").mkdir()
+    (repo / "acceptance" / "phase1_expected.txt").write_text("mine\n", encoding="utf-8")
+    import subprocess
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "a file of the agent's"], cwd=repo, check=True)
+    r = styre("run", "design.md", "--quiet", "--retries", "0", default="value2")
+    assert r.returncode == 1
+    assert (repo / "acceptance" / "phase1_expected.txt").read_text() == "mine\n"
+    assert "gate failed: acceptance (phase 1)" in r.stdout
