@@ -104,13 +104,36 @@ class Usage:
     reasoning: int | None = None
     cache_read: int = 0
 
-    def add(self, usage):
+    def add(self, usage, content=None):
         if usage.get("totalTokens") is not None:
             self.peak = max(self.peak or 0, usage["totalTokens"])   # high-water, not a sum
         self.output += usage.get("output") or 0
         self.cache_read += usage.get("cacheRead") or 0   # summed: a hit rate, not a total
-        if usage.get("reasoning") is not None:
-            self.reasoning = (self.reasoning or 0) + usage["reasoning"]
+        thought = thinking_tokens(usage, content)
+        if thought is not None:
+            self.reasoning = (self.reasoning or 0) + thought
+
+
+def thinking_tokens(usage, content=None):
+    """The thinking tokens in one assistant message, or None when nothing says.
+
+    The provider's `usage.reasoning` when it can back it; otherwise the message's output split
+    by characters across its thinking, text and tool-call blocks. mlxserve reported `0` on a
+    message carrying a 66,781-character thinking block (2026-09-23), so a zero beside
+    thinking blocks is not believed. modelhost's figure agreed with the character split within
+    4 points on three phases (2026-09-29), so a reported figure is otherwise taken as is."""
+    blocks = [b for b in content or [] if isinstance(b, dict)]
+    thought = sum(len(b.get("thinking") or "") for b in blocks if b.get("type") == "thinking")
+    reported = usage.get("reasoning")
+    if reported is not None and (reported or not thought):
+        return reported
+    if not blocks:
+        return reported
+    rest = sum(len(b.get("text") or "") for b in blocks if b.get("type") == "text")
+    rest += sum(len(json.dumps(b.get("arguments") or {})) for b in blocks
+                if b.get("type") == "toolCall")
+    output = usage.get("output") or 0
+    return round(output * thought / (thought + rest)) if thought else 0
 
 
 @dataclass
@@ -237,9 +260,10 @@ def read_phase_events(run, phase):
             elif e.get("errorMessage"):
                 phase.compactions_failed.append(e["errorMessage"])
         elif kind == "message_end":
-            usage = (e.get("message") or {}).get("usage")
+            message = e.get("message") or {}
+            usage = message.get("usage")
             if isinstance(usage, dict):
-                phase.usage.add(usage)
+                phase.usage.add(usage, message.get("content"))
 
 
 def read_state_files(run, summary):
@@ -306,6 +330,14 @@ def count(n):
     return "n/a" if n is None else f"{n:,}"
 
 
+def thinking_cell(usage):
+    """Thinking tokens with their share of the output: on a local model it is most of it."""
+    if usage.reasoning is None:
+        return "n/a"
+    share = f" ({usage.reasoning / usage.output:.0%})" if usage.output else ""
+    return f"{usage.reasoning:,}{share}"
+
+
 def table(header, rows):
     """A markdown table, padded so it is also readable as plain text in a terminal."""
     widths = [max(len(str(r[i])) for r in [header, *rows]) for i in range(len(header))]
@@ -355,7 +387,7 @@ def phase_table(summary):
                      "-" if p.rounds is None else p.rounds,
                      "-" if p.self_rounds is None else p.self_rounds,
                      count(p.usage.peak), count(p.usage.output),
-                     count(p.usage.reasoning), count(p.usage.cache_read)])
+                     thinking_cell(p.usage), count(p.usage.cache_read)])
     total = Usage()
     for p in summary.phases:
         total.output += p.usage.output
@@ -371,7 +403,7 @@ def phase_table(summary):
                          any(p.gate_runs for p in summary.phases)),
                  sum(p.rounds or 0 for p in summary.phases),
                  sum(p.self_rounds or 0 for p in summary.phases),
-                 count(total.peak), count(total.output), count(total.reasoning),
+                 count(total.peak), count(total.output), thinking_cell(total),
                  count(total.cache_read)])
     return ["## Phases", "",
             table(["#", "Phase", "Status", "Commit", "Agent min", "Gate min", "Fix", "Self",
@@ -380,8 +412,10 @@ def phase_table(summary):
             "Peak ctx is the largest context the model held during the phase, and the "
             "total row is the largest of those, not a sum. It is what a phase costs: "
             "roughly a minute per 1,000 tokens, and what the model host runs out of memory "
-            "over. Thinking is the part of output the provider attributed to reasoning; "
-            "`n/a` means it reported no breakdown, which is not the same as none. Cached "
+            "over. Thinking is the part of output spent reasoning, and its share of the output: "
+            "the provider's count, or the thinking blocks' share of the characters where the "
+            "provider gives none it can back. `n/a` means neither exists, which is not the "
+            "same as none. Cached "
             "is the sum of prompt-cache hits: large is good, and it collapsing means the "
             "prompt prefix stopped being stable."]
 

@@ -399,8 +399,8 @@ def test_events_and_log_are_written_separately(styre, repo, commits):
 # --- context management: extensions, fix rounds, relays ------------------------------------
 
 def with_window(pi_config, window=1000):
-    """A pi config naming a default model with a context window: relay at 60%, resume below
-    50% (600 and 500 tokens here)."""
+    """A pi config naming a default model with a context window: relay at 75%, resume below
+    50% (750 and 500 tokens here)."""
     (pi_config / "settings.json").write_text(json.dumps(
         {"defaultProvider": "p", "defaultModel": "m"}), encoding="utf-8")
     (pi_config / "models.json").write_text(json.dumps({"providers": {"p": {
@@ -455,7 +455,7 @@ def test_a_small_fix_round_resumes_the_session(styre, repo, pi_config):
 
 def test_a_large_fix_round_starts_fresh(styre, repo, pi_config):
     with_window(pi_config)
-    r = styre("run", "design.md", "--quiet", env_extra={"FAKE_PI_CONTEXT": "550"},  # 500 ≤ 550 < 600
+    r = styre("run", "design.md", "--quiet", env_extra={"FAKE_PI_CONTEXT": "550"},  # 500 ≤ 550 < 750
               plan={"phase1.prompt.md": "bad_gate", "phase1.fix1.md": "ok"})
     assert r.returncode == 0, r.stdout
     fix = [a for a in argvs(repo) if "phase1.fix1.md" in attached(a)][0]
@@ -469,7 +469,7 @@ def test_a_step_past_the_threshold_continues_in_a_fresh_process(styre, repo, pi_
     assert commits()[:2] == ["Phase 2: Second phase", "Phase 1: First phase"]
     relays = [e for e in timeline(repo) if e["event"] == "relay"]
     assert [(e["phase"], e["step"], e["context"], e["relay_at"]) for e in relays] == [
-        (1, "builder", 900, 600)]
+        (1, "builder", 900, 750)]
     relay_argv = [a for a in argvs(repo) if "phase1.relay1.md" in attached(a)][0]
     assert attached(relay_argv) == ["phase1.prompt.md", "phase1.relay1.md"]
     text = (run_dir(repo) / "phase1.relay1.md").read_text()
@@ -495,6 +495,19 @@ def test_a_relay_first_resumes_the_stopped_step_to_write_its_progress(styre, rep
     assert [(e["step"], e.get("handoff"), e["rc"]) for e in ends][:2] == [
         ("builder", None, 75), ("builder handoff", True, 0)]
     assert "resumed" not in ends[1]  # not a resumed fix round
+    # The fake handoff keeps working for 60 s after writing the file; styre ends it at the
+    # first turn end once the file has changed.
+    assert ends[1]["seconds"] < 30
+
+
+def test_a_fresh_start_that_changes_nothing_stops_the_phase(styre, repo, pi_config, commits):
+    with_window(pi_config)
+    r = styre("run", "design.md", "--quiet", plan={"phase1.prompt.md": "grow"}, default="stuck",
+              timeout=120)
+    assert r.returncode == 1
+    assert "fresh start 1 filled its context" in r.stdout and "without changing" in r.stdout
+    assert [e["relays"] for e in timeline(repo) if e["event"] == "relay"] == [1, 2]
+    assert commits() == ["initial"]
 
 
 def test_relays_are_bounded(styre, repo, pi_config, commits):

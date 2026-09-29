@@ -226,6 +226,10 @@ def main():
         before = previous.read_text(encoding="utf-8") if previous.exists() else ""
         previous.write_text(before + f"Learned: handed off by {name}\n", encoding="utf-8")
         transcript(f"Wrote the progress file for {name}.")
+        time.sleep(60)  # and then carries on working, as a real one did for 42 tool calls
+        return
+    if action == "stuck":  # a fresh start that reads and thinks, and changes nothing at all
+        growing_transcript(int(os.environ.get("FAKE_PI_GROW", "900")))
         return
     Path(".styre/progress.md").write_text(f"Done: ran {name}\nNow: {action}\n", encoding="utf-8")
     if action == "grow":

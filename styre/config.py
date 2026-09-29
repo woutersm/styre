@@ -45,14 +45,21 @@ PI_EXTENSIONS = tuple(sorted((Path(__file__).parent / "pi_extensions").glob("*.j
 # is told it has, and so what the model host was sized for. Fractions, not token counts, so
 # the numbers move with the config instead of being one host's facts.
 # - A step whose context passes RELAY_FRACTION is stopped at the end of its current turn and
-#   the phase continues in a fresh process from the agent's progress file. 0.6 of 120k is 72k:
-#   past ~60k decode has slowed by a third and prefill throttles on a 48 GB host.
+#   the phase continues in a fresh process from the agent's progress file. 0.75 of 120k is
+#   90k. It was 0.6, set from mlxserve's decay curve; on modelhost (2026-09-29, four phases, 900
+#   messages) writing flattens at 26-27 tok/s from 40k to 80k and prefill per message stays
+#   ~8 s, so staying costs little while every fresh start re-reads its way in. What is left
+#   of the reason is the host's memory wall, which modelhost cleared at 96k in model-bench.
 # - A fix round resumes the failed step's own session when that step ended below
 #   RESUME_FRACTION: its conversation is still in the server's prompt cache, so a small fix
 #   costs a minute instead of a fresh process re-reading the phase. Above it, a fresh start.
-RELAY_FRACTION = 0.6
+RELAY_FRACTION = 0.75
 RESUME_FRACTION = 0.5
-MAX_RELAYS = 3  # fresh starts a phase may take for context before it counts as stuck
+# A phase keeps relaying while each fresh start changes something — the tree or the progress
+# file — and stops at the first that changes neither. MAX_RELAYS is only the backstop. It was
+# the whole rule at 3, and two phases that were progressing fine finished on exactly their
+# third fresh start (app sources 6 and 7, 2026-09-29).
+MAX_RELAYS = 6
 
 DEFAULT_RETRIES = 2
 # Seconds of *silence* allowed from pi, not total runtime — see process._watch_idle. It

@@ -695,7 +695,7 @@ failing fast. Three rules follow, and every mechanism below is one of them:
 | No replayed thinking | `pi_extensions/strip-thinking.js` | drops earlier thinking from every request (modelhost ignores `preserve_thinking`) |
 | Whole gate on failure | `guard.verify()` | every gate command runs even after one fails; the fix prompt gets all failures at once |
 | Progress file | `AGENTS.md` block, `rundir.py` | the agent keeps `.styre/progress.md` (Done / Now / Next / Learned, under 40 lines) as it goes; cleared at phase start, archived as `phaseN.progress.md`, handed to every fix round and relay |
-| Relay | `process.stream_pi(relay_at=…)`, `runner.run_phase` | a step whose context passes **0.6 × contextWindow** (72k) is stopped at the next `turn_end`, gets one **handoff turn** in its own resumed session (still cached) that only writes the progress file, and continues in a fresh process with the task files and that file. Not a fix round; at most `MAX_RELAYS` (3), then the phase stops as too big. A step that had already written its state file when stopped is judged normally |
+| Relay | `process.stream_pi(relay_at=…)`, `runner.run_phase` | a step whose context passes **0.75 × contextWindow** (90k; 0.6 until 2026-09-29 — on modelhost writing flattens at 26-27 tok/s from 40k to 80k, so a fresh start costs more than staying) is stopped at the next `turn_end`, gets one **handoff turn** in its own resumed session (still cached) that only writes the progress file — ended by styre at the first `turn_end` after the file changes (`done_when`), since one handoff kept coding for 42 tool calls — and continues in a fresh process with the task files and that file. Not a fix round. **Bounded by progress:** a fresh start that ends with the tree (`gitops.work_tree_id()`, a throwaway-index `write-tree`) and the progress file both unchanged stops the phase; `MAX_RELAYS` (6) is only the backstop. A step that had already written its state file when stopped is judged normally |
 | Resumed fix round | `runner.run_phase` | when the failed step ended below **0.5 × contextWindow** (60k), the fix round continues its session (`--session`), still in the server's cache, with a short prompt. Above it, a fresh process gets the phase prompt, the failures and the progress file |
 | Visibility | `summarize`, `watch` | relays, resumed rounds, cancelled and failed compactions are counted; a relay's `RELAY_RC` is never reported as pi failing |
 | Phase shape | `design.toolchains()`, `new_dependencies()`, `check` | names, in one line, the phases gated in two toolchains (backend + UI: 6 of 7 peaked at 74-116k on app), flags a phase using a declared, not-yet-installed library with no code example, and prints this repo's history against the budget. Replaced the path-spread heuristic on 2026-09-29: measured against 44 phases it flagged 12, of which 6 ran large |
@@ -858,9 +858,11 @@ Two traps this file has already fallen into:
   always zero.
 - ⚠️ **`usage.reasoning` is not trustworthy on mlxserve.** It reported `0` on a message carrying
   a 66,781-character thinking block (2026-09-23). The `n/a is not 0` rule still holds for
-  providers that omit the field, but here a reported `0` means nothing, so the summary's
-  Thinking column is not a measurement. Measure thinking by summing the `thinking` content
-  blocks instead.
+  providers that omit the field, but here a reported `0` means nothing. `summarize.
+  thinking_tokens()` therefore disbelieves a zero beside thinking blocks and splits the
+  message's output by characters instead. modelhost's own figure agreed with that split within
+  4 points on three phases (2026-09-29), so on modelhost the Thinking column is a measurement,
+  and it reads 68-82% of all output. `watch` shows the same share live.
 
 ## Where the model runs
 

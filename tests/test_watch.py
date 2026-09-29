@@ -413,3 +413,14 @@ def test_prefill_and_writing_are_measured_apart():
     assert tail.write_per_second == pytest.approx(432 / 12)
     assert tail.prefill_share == pytest.approx(33 / 45)
     assert tail.tokens_per_second == pytest.approx(432 / 45)  # the blended rate, unchanged
+    assert tail.thinking_share is None  # no message said anything about thinking
+
+
+def test_thinking_share_is_the_thinking_part_of_all_output():
+    def end(ts, output, reasoning):
+        return {"ts": ts, "line": json.dumps({"type": "message_end", "message": {
+            "content": [{"type": "text", "text": "done"}],
+            "usage": {"output": output, "reasoning": reasoning, "totalTokens": 20000}}})}
+
+    write_run("20260101-000000", RUNNING, events={1: [end(stamp(5), 300, 240), end(stamp(9), 100, 0)]})
+    assert watch.tail_for(watch.find_run("20260101-000000"), 1).thinking_share == pytest.approx(0.6)

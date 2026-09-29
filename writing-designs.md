@@ -10,20 +10,21 @@ writes the design, before the run.
 
 ## The workflow
 
-Six steps, in this order. Each one exists because skipping it cost a night.
+Seven steps, in this order. Each one exists because skipping it cost a night.
 
 1. **Grill the intent.** What it does, what it must not do, what the tests fake. Decisions
    go into the preamble, and only what *every* phase needs goes there — it ships to each one.
 2. **Cut the phases** by the rules below: fill a table *or* show it; the gate green on each
    phase alone; the ripple last. Write each phase self-contained — no "read X first".
-3. **Fix every external shape in the text**: the API's request and response, and for a new
+3. **Hand over the tree**: a **Where** list per phase — file, line range, what is there.
+4. **Fix every external shape in the text**: the API's request and response, and for a new
    library the calls and what they return. Anything the design leaves out, the agent learns
    by trial inside the phase, at context and thinking cost, again in every fresh start.
-4. **Estimate each phase's work**: `grep -rn` the names it changes, count the files it must
+5. **Estimate each phase's work**: `grep -rn` the names it changes, count the files it must
    open. A phase gated by both a backend and a UI peaks at 74-116k here; nothing else goes in it.
-5. **Prove it before the night**: run the DDL and every new gate command once by hand, then
+6. **Prove it before the night**: run the DDL and every new gate command once by hand, then
    `styre check` until nothing in "Worth a look" is a surprise.
-6. **After the run**, read `styre summarize` against the table at the end of this file, change
+7. **After the run**, read `styre summarize` against the table at the end of this file, change
    the *design*, commit that change on its own, and resume with `--from-phase`.
 
 ## The unit of a phase is work, not prose
@@ -137,6 +138,31 @@ the traps (a floating `datetime`, a bare `date` for all-day). Run the snippet on
 paste it. `styre check` flags a declared, not-yet-installed package that a phase names without
 a code block mentioning it.
 
+## Hand over what you already know about the tree
+
+Every pi process finds its way in before it writes. Measured on app's sources run
+(2026-09-29), up to each process's first `write` or `edit`:
+
+| | tool calls | context used |
+| --- | --- | --- |
+| builders, phases 4-7 | 39-79 | 40-58k tokens |
+| fresh starts after a relay | 11-61 | 9-50k tokens |
+
+Against a 90k relay line, a builder spends half its context on orientation, and a relayed
+phase pays it again per fresh start. The session writing the design has usually just read
+those files. Write it down, per phase, as a **Where** list: file, line range, what is there.
+
+```markdown
+Where:
+- `src/app/briefing.py` 40-95 — `run()`: builds the header, then one line per todo
+- `src/app/api/day.py` 120-160 — `_items_for_day()`: the kinds, sorted by `at`
+- `tests/test_briefing.py` 1-60 — `FakeRpc`, `at(h, m)`; copy a test from here
+```
+
+Line ranges go stale as earlier phases edit the file; that is fine — a range that is 20 lines
+off is still a better start than a whole-file read. Keep it to what the phase edits and the
+one test it should copy from, not everything it might look at.
+
 ## Say what the phase must not touch
 
 "Nothing outside `src/app/db.py` and `src/app/store.py` is edited" is an exit criterion, is
@@ -187,3 +213,4 @@ and of the last one that worked: the difference is the size of the split you nee
 5. Run the DDL and each new gate command once, by hand.
 6. Every new library a phase uses has a snippet in that phase, run once.
 7. No phase both fills a table and shows it.
+8. Every phase has a **Where** list of the files it edits, with line ranges.

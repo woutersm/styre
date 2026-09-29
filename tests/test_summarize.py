@@ -73,7 +73,19 @@ def test_real_token_counts_are_read_off_a_post_fix_capture(tmp_path):
     # streaming, so unlike the older fixtures it carries real numbers.
     usage = collect(make_run(tmp_path, fixture="pi_usage.jsonl")).phases[0].usage
     assert (usage.peak, usage.output, usage.cache_read) == (7727, 23, 6144)
-    assert usage.reasoning == 0                           # reported as zero, not absent
+    # mlxserve reported `reasoning: 0` on a message that carries a thinking block. That zero is
+    # not believed: the output is split by characters across the message's blocks instead.
+    assert usage.reasoning == 22
+
+
+def test_thinking_is_the_providers_count_unless_it_denies_visible_thinking():
+    from styre.summarize import thinking_tokens
+    thought = [{"type": "thinking", "thinking": "x" * 300}, {"type": "text", "text": "y" * 100}]
+    assert thinking_tokens({"output": 40, "reasoning": 25}, thought) == 25   # believed
+    assert thinking_tokens({"output": 40, "reasoning": 0}, thought) == 30    # 3/4 of 40
+    assert thinking_tokens({"output": 40}, thought) == 30                    # none reported
+    assert thinking_tokens({"output": 40, "reasoning": 0}, [{"type": "text", "text": "y"}]) == 0
+    assert thinking_tokens({"output": 40}) is None                          # nothing says
 
 
 def test_usage_takes_the_peak_context_and_sums_the_output():

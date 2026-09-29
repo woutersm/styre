@@ -126,8 +126,9 @@ def handoff_prompt(context, relay_at):
 this phase is given, and a fresh process will carry on from your progress file — it knows only
 what that file says, and it will not see this conversation.
 
-Now, in this turn, write .styre/progress.md (under 40 lines), and do nothing else: no other
-file, no command, no state file.
+Now, in this turn, write .styre/progress.md — about 40 lines; do not trim it to a count —
+and do nothing else: no other file, no command, no state file. styre ends this process as
+soon as the file is written.
 
 Done: what is finished and in the tree, by file.
 Now: the exact step you were on, and what is left of it.

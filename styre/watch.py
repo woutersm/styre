@@ -42,6 +42,7 @@ from styre.summarize import (
     parse_ts,
     read_jsonl,
     read_timeline,
+    thinking_tokens,
     where_to_look,
 )
 
@@ -182,6 +183,8 @@ class _Tail:
         self.write_tokens = 0       # usage.output
         self.write_seconds = 0.0    # first message_update -> message_end
         self._first_token = None
+        self.output_tokens = 0      # every message's output, timed or not
+        self.thinking_tokens = None  # the part of it spent thinking; None: nothing said
         self.compactions_failed = 0     # pi's own compaction, failed (2026-09-28's loop)
         self.compactions_cancelled = 0  # cancelled by styre's no-compaction extension
         self._message_start = None
@@ -234,6 +237,11 @@ class _Tail:
                 # this module is read off pi's stream.
                 self.points.append((stamp, total))
             output = usage.get("output") if isinstance(usage, dict) else None
+            if output:
+                self.output_tokens += output
+                thought = thinking_tokens(usage, (event.get("message") or {}).get("content"))
+                if thought is not None:
+                    self.thinking_tokens = (self.thinking_tokens or 0) + thought
             if output and self._message_start and stamp:
                 self.decode_seconds += (stamp - self._message_start).total_seconds()
                 self.decode_tokens += output
@@ -277,6 +285,13 @@ class _Tail:
     def write_per_second(self):
         """Output tokens per second after the first token: the model's writing speed."""
         return self.write_tokens / self.write_seconds if self.write_seconds > 0 else None
+
+    @property
+    def thinking_share(self):
+        """The fraction of output spent thinking, or None before any output."""
+        if self.thinking_tokens is None or not self.output_tokens:
+            return None
+        return self.thinking_tokens / self.output_tokens
 
     @property
     def prefill_share(self):
@@ -587,6 +602,7 @@ def live_facts(run):
         prefill_s=tail.prefill_per_second,
         write_s=tail.write_per_second,
         prefill_share=tail.prefill_share,
+        thinking_share=tail.thinking_share,
         stale=stale,
         stale_class="bad" if stale is not None and stale > STALE_SECONDS else "dim",
         tool_errors=dict(sorted(tail.tool_errors.items())),
@@ -615,6 +631,7 @@ def live_html(run):
              ("ctx/min", "-" if f["per_min"] is None else f"{f['per_min']:,.0f}"),
              ("prefill", prefill_text(f)),
              ("writing", "-" if f["write_s"] is None else f"{f['write_s']:.1f} tok/s"),
+             ("thinking", thinking_text(f)),
              ("last output",
               f"<span class={f['stale_class']}>{fmt_seconds(f['stale'])} ago</span>")]
     grid = "".join(f"<div><div class=dim>{k}</div><div class=big>{v}</div></div>"
@@ -627,6 +644,11 @@ def live_html(run):
         errors += f"<div class={css}>{esc(compacting)}</div>"
     return (f"<div class=grid>{grid}<div>{sparkline(f['series'], f['threshold'])}</div></div>"
             f"{server_html(f['server'])}{errors}<pre>{esc(f['log'])}</pre>")
+
+
+def thinking_text(f):
+    share = f.get("thinking_share")
+    return "-" if share is None else f"{share:.0%} of output"
 
 
 def prefill_text(f):
@@ -726,6 +748,7 @@ def live_text(run, color=False):
             f"peak ctx {fmt_count(f['peak'])}{c(ceiling, 'dim')} · ctx/min {per_min} · "
             f"prefill {prefill_text(f)} · writing "
             f"{'-' if f['write_s'] is None else format(f['write_s'], '.1f')} tok/s · "
+            f"thinking {thinking_text(f)} · "
             f"last output {c(fmt_seconds(f['stale']) + ' ago', f['stale_class'])}",
             c(text_sparkline(f["series"]), "dim"),
         ]

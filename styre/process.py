@@ -149,7 +149,8 @@ def _context(d):
     return total if isinstance(total, int) and total > 0 else None
 
 
-def stream_pi(cmd, timeout=None, log=None, events=None, quiet=False, relay_at=None, stats=None):
+def stream_pi(cmd, timeout=None, log=None, events=None, quiet=False, relay_at=None, stats=None,
+              done_when=None):
     """Run pi, writing every output line to the events file with our own timestamp as it
     arrives, and the readable rendering to the terminal and the log as it happens.
 
@@ -160,6 +161,10 @@ def stream_pi(cmd, timeout=None, log=None, events=None, quiet=False, relay_at=No
     nothing is cut off mid-edit — and RELAY_RC is returned. `stats`, when given, is filled
     with `last_context`, the context of the last assistant message, which is what a fix
     round's choice between resuming and starting fresh is made on.
+
+    `done_when`: a callable asked at every `turn_end`; once it returns true pi is stopped
+    there and 0 is returned. A handoff turn uses it to end as soon as the progress file is
+    written — told to do nothing else, one went on coding for 42 tool calls (2026-09-29).
     """
     stats = {} if stats is None else stats
     lg = open(log, "a", encoding="utf-8") if log else None
@@ -201,7 +206,7 @@ def stream_pi(cmd, timeout=None, log=None, events=None, quiet=False, relay_at=No
                          daemon=True).start()
     if not quiet:
         show(GREY)
-    relayed = False
+    relayed = finished = False
     try:
         for line in p.stdout:
             clock["last"] = time.monotonic()
@@ -220,6 +225,11 @@ def stream_pi(cmd, timeout=None, log=None, events=None, quiet=False, relay_at=No
                         relayed = True
                         emit(f"\n[styre] context at {stats['last_context']:,} tokens, past "
                              f"{relay_at:,}: continuing in a fresh process from the progress file")
+                        kill_tree(p)
+                        break
+                    if done_when and event.get("type") == "turn_end" and done_when():
+                        finished = True
+                        emit("\n[styre] done: stopping pi at the end of this turn")
                         kill_tree(p)
                         break
                 text = render_event(event, state)
@@ -244,6 +254,8 @@ def stream_pi(cmd, timeout=None, log=None, events=None, quiet=False, relay_at=No
         return finish(124)
     if relayed:
         return finish(RELAY_RC)
+    if finished:
+        return finish(0)
     return finish(p.returncode if p.returncode is not None else 124)
 
 

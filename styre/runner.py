@@ -39,6 +39,7 @@ from styre.gitops import (
     is_dirty,
     phase_commits,
     stage_all,
+    work_tree_id,
 )
 from styre.guard import verify
 from styre.process import RELAY_RC, stream_pi
@@ -256,10 +257,11 @@ def handoff(ctx, n, step, k, context, relay_at):
     prompt = run.handoff(n, k)
     prompt.write_text(handoff_prompt(context, relay_at), encoding="utf-8")
     name = f"{step} handoff"
+    before = read_progress()
     with tl.span("pi", phase=n, step=name) as end:
         end["rc"] = stream_pi(pi_command(run, n, name, [prompt], session),
                               timeout=opts.timeout or None, log=run.log(n), events=run.events(n),
-                              quiet=opts.quiet)
+                              quiet=opts.quiet, done_when=lambda: read_progress() != before)
         end["handoff"] = True
     clear_inbox(n)  # a handoff finishes nothing: a state file written here is not the phase's
     archive_progress(run, n)
@@ -301,6 +303,7 @@ def run_phase(ctx, n):
     task = [builder]          # the prompt files that state the work of the current round
     prompts, session = task, None
     rounds, relays, why, state = 0, 0, None, None
+    start_mark = None
     round_relays = 0
     while True:
         clear_inbox(n)
@@ -321,18 +324,27 @@ def run_phase(ctx, n):
             collect(run, n)
             state = read_state(run.state(n))
             if state is None:
+                stuck = round_relays and (work_tree_id(), read_progress()) == start_mark
                 relays += 1
                 round_relays += 1
                 tl.event("relay", phase=n, step=step, context=stats.get("last_context"),
                          relay_at=relay_at, relays=relays)
+                if stuck:
+                    why = (f"fresh start {relays - 1} filled its context to {relay_at:,} tokens "
+                           "without changing the tree or its progress file — the phase is "
+                           "stuck, or too big for one context: split it")
+                    break
                 if relays > MAX_RELAYS:
                     why = (f"the context outgrew {relay_at:,} tokens {relays} times; "
                            f"{MAX_RELAYS} fresh starts did not finish the phase — it is too "
                            "big for one phase, split it")
                     break
                 print(f"    context {stats.get('last_context', 0):,} ≥ {relay_at:,}: fresh start "
-                      f"{relays} of {MAX_RELAYS}", flush=True)
+                      f"{relays}", flush=True)
                 handoff(ctx, n, step, relays, stats.get("last_context", 0), relay_at)
+                # What the fresh start begins from. It must change one of the two to earn
+                # another: a phase is bounded by its progress, MAX_RELAYS only backs that up.
+                start_mark = (work_tree_id(), read_progress())
                 relay = run.relay(n, relays)
                 relay.write_text(relay_prompt(n, phase, read_progress(), stats.get("last_context", 0),
                                               relay_at), encoding="utf-8")

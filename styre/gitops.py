@@ -69,3 +69,17 @@ def add_excludes():
     with open(exclude, "a", encoding="utf-8") as f:
         f.writelines(p + "\n" for p in EXCLUDES if p not in have)
     return exclude
+
+
+def work_tree_id():
+    """A hash of the working tree as it stands — tracked and untracked files, the excludes
+    honoured — or None. Built in a throwaway index, so the real one is never touched. Two
+    equal ids mean nothing in the tree changed between them."""
+    import os
+    import subprocess
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        env = {**os.environ, "GIT_INDEX_FILE": str(Path(tmp) / "index")}
+        add = subprocess.run(["git", "add", "-A"], env=env, capture_output=True)
+        tree = subprocess.run(["git", "write-tree"], env=env, capture_output=True, text=True)
+    return tree.stdout.strip() if add.returncode == 0 and tree.returncode == 0 else None
