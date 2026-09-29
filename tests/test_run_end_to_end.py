@@ -474,8 +474,27 @@ def test_a_step_past_the_threshold_continues_in_a_fresh_process(styre, repo, pi_
     assert attached(relay_argv) == ["phase1.prompt.md", "phase1.relay1.md"]
     text = (run_dir(repo) / "phase1.relay1.md").read_text()
     assert "fresh process" in text and "Done: ran phase1.prompt.md" in text
+    assert "Learned: handed off by phase1.handoff1.md" in text  # the handoff turn wrote it
     assert [e["rounds"] for e in timeline(repo) if e["event"] == "phase_end"][0] == 0  # not a fix round
     assert [e["relays"] for e in timeline(repo) if e["event"] == "phase_end"][0] == 1
+
+
+def test_a_relay_first_resumes_the_stopped_step_to_write_its_progress(styre, repo, pi_config):
+    """app phase 3, 2026-09-28: the builder was stopped at 72k without ever writing its progress
+    file, so the first fresh start began blind and spent 80 minutes re-reading the tree."""
+    with_window(pi_config)
+    r = styre("run", "design.md", "--quiet", plan={"phase1.prompt.md": "grow"}, timeout=60)
+    assert r.returncode == 0, r.stdout
+    names = [attached(a) for a in argvs(repo) if attached(a)]
+    assert names[:3] == [["phase1.prompt.md"], ["phase1.handoff1.md"],
+                         ["phase1.prompt.md", "phase1.relay1.md"]]
+    handoff = [a for a in argvs(repo) if attached(a) == ["phase1.handoff1.md"]][0]
+    assert handoff[handoff.index("--session") + 1].endswith(".jsonl")  # the stopped session
+    assert "--session-dir" not in handoff
+    ends = [e for e in timeline(repo) if e["event"] == "pi_end" and e["phase"] == 1]
+    assert [(e["step"], e.get("handoff"), e["rc"]) for e in ends][:2] == [
+        ("builder", None, 75), ("builder handoff", True, 0)]
+    assert "resumed" not in ends[1]  # not a resumed fix round
 
 
 def test_relays_are_bounded(styre, repo, pi_config, commits):

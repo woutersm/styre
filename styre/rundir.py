@@ -51,6 +51,10 @@ class RunDir:
         """The prompt for phase n's k-th fresh start after its context outgrew the threshold."""
         return self.root / f"phase{n}.relay{k}.md"
 
+    def handoff(self, n, k):
+        """The prompt that asks phase n's k-th stopped step to write its progress file."""
+        return self.root / f"phase{n}.handoff{k}.md"
+
     def progress(self, n):
         """The agent's progress file for phase n, as it stood after the latest step."""
         return self.root / f"phase{n}.progress.md"

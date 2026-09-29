@@ -117,6 +117,27 @@ updating "status" and "unmet_criteria" to reflect where you actually got to.
 """
 
 
+def handoff_prompt(context, relay_at):
+    """The one turn a stopped step gets, in its own session, before a fresh process takes over:
+    its conversation is still in the server's cache, so writing down what it knows costs a
+    minute, and the next process does not start blind (app phase 3, 2026-09-28: the builder
+    never wrote its progress file, and the first fresh start re-read the same eight files)."""
+    return f"""Stop the work here. Your context has reached {context:,} tokens, past the {relay_at:,}
+this phase is given, and a fresh process will carry on from your progress file — it knows only
+what that file says, and it will not see this conversation.
+
+Now, in this turn, write .styre/progress.md (under 40 lines), and do nothing else: no other
+file, no command, no state file.
+
+Done: what is finished and in the tree, by file.
+Now: the exact step you were on, and what is left of it.
+Next: the remaining steps, in order.
+Learned: every fact you had to find out that is not in the task — an API's real shape, a
+  signature, a command that works, a trap you hit. The next process would otherwise find it
+  out again.
+"""
+
+
 def relay_prompt(n, phase, progress, context, relay_at):
     """The prompt for a fresh start after a step's context outgrew the threshold, attached after
     the task it was on (the phase prompt, and the fix prompt when it was in a fix round)."""

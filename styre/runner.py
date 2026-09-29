@@ -43,7 +43,14 @@ from styre.gitops import (
 from styre.guard import verify
 from styre.process import RELAY_RC, stream_pi
 from styre.process import run as run_command
-from styre.prompts import build_prompt, fix_prompt, relay_prompt, resumed_fix_prompt, template_hash
+from styre.prompts import (
+    build_prompt,
+    fix_prompt,
+    handoff_prompt,
+    relay_prompt,
+    resumed_fix_prompt,
+    template_hash,
+)
 from styre.review import describe_review
 from styre.rundir import (
     RunDir,
@@ -237,6 +244,27 @@ def context_budget():
     return int(window * RELAY_FRACTION), int(window * RESUME_FRACTION)
 
 
+def handoff(ctx, n, step, k, context, relay_at):
+    """Before a relay: resume the stopped step's session for one turn that only writes the
+    progress file. The step was stopped between two turns, so the conversation is whole and
+    still cached; the fresh process then starts from what this one knew. A handoff that fails
+    costs nothing but itself — the relay goes ahead with whatever progress file there is."""
+    run, opts, tl = ctx.run, ctx.opts, ctx.tl
+    session = newest_session(run, n)
+    if session is None:
+        return
+    prompt = run.handoff(n, k)
+    prompt.write_text(handoff_prompt(context, relay_at), encoding="utf-8")
+    name = f"{step} handoff"
+    with tl.span("pi", phase=n, step=name) as end:
+        end["rc"] = stream_pi(pi_command(run, n, name, [prompt], session),
+                              timeout=opts.timeout or None, log=run.log(n), events=run.events(n),
+                              quiet=opts.quiet)
+        end["handoff"] = True
+    clear_inbox(n)  # a handoff finishes nothing: a state file written here is not the phase's
+    archive_progress(run, n)
+
+
 def run_phase(ctx, n):
     """Run one phase to a verdict, committing it if everything passes.
 
@@ -247,8 +275,9 @@ def run_phase(ctx, n):
     A phase is a sequence of pi processes: the builder, then fix rounds after a red gate. Two
     things keep each one's context small (see CLAUDE.md, "Context"):
 
-    - **A relay**: a step whose context passes `relay_at` is stopped between two turns and
-      the phase carries on in a fresh process, handed the task and the agent's progress file.
+    - **A relay**: a step whose context passes `relay_at` is stopped between two turns, gets
+      one resumed turn to write its progress file (`handoff`), and the phase carries on in a
+      fresh process, handed the task and that file.
       It is not a fix round and uses none of `--retries`; MAX_RELAYS bounds it.
     - **A resumed fix round**: when the step that failed the gate ended below `resume_below`,
       the fix round continues that step's own session, which the model host still has cached,
@@ -303,6 +332,7 @@ def run_phase(ctx, n):
                     break
                 print(f"    context {stats.get('last_context', 0):,} ≥ {relay_at:,}: fresh start "
                       f"{relays} of {MAX_RELAYS}", flush=True)
+                handoff(ctx, n, step, relays, stats.get("last_context", 0), relay_at)
                 relay = run.relay(n, relays)
                 relay.write_text(relay_prompt(n, phase, read_progress(), stats.get("last_context", 0),
                                               relay_at), encoding="utf-8")

@@ -221,6 +221,12 @@ def main():
     else:
         write_session(sd, flag("--name"))
     Path(".styre").mkdir(exist_ok=True)
+    if ".handoff" in name:  # styre's handoff turn: write the progress file, nothing else
+        previous = Path(".styre/progress.md")
+        before = previous.read_text(encoding="utf-8") if previous.exists() else ""
+        previous.write_text(before + f"Learned: handed off by {name}\n", encoding="utf-8")
+        transcript(f"Wrote the progress file for {name}.")
+        return
     Path(".styre/progress.md").write_text(f"Done: ran {name}\nNow: {action}\n", encoding="utf-8")
     if action == "grow":
         growing_transcript(int(os.environ.get("FAKE_PI_GROW", "900")))

@@ -22,7 +22,7 @@ committed on a red gate.
 | `styre/design.py` | Parsing a design into `Phase` objects; `preamble()` and `phase_context()`; `validate()` (errors) and `advisories()` / `doc_references()` (warnings); the `check` rendering. |
 | `styre/review.py` | `find_references()` / `describe_review()`: the second half of `check`, and what `run` calls automatically before phase 1 and after every commit. For every backtick-quoted identifier a phase names, greps the target repo's test-shaped files for existing references — the mechanical half of catching a phase that collides with a frozen test fixture, before a run starts rather than after a timeout. A name with more than `MAX_HITS` hits is dropped as a local variable or a library, not a collision. |
 | `styre/touch.py` | Claude as the escape hatch — see "The supervising layer". `run_claude()`, `touch_prompt()`, `touch()`: one turn at a stuck phase. Invoked only by `runner.py`'s `_escalate()`, only when `--claude-touch` is passed. |
-| `styre/prompts.py` | `build_prompt()`, `fix_prompt()` (a fresh fix round), `resumed_fix_prompt()` (a resumed one) and `relay_prompt()` (a fresh start for context). |
+| `styre/prompts.py` | `build_prompt()`, `fix_prompt()` (a fresh fix round), `resumed_fix_prompt()` (a resumed one), `handoff_prompt()` (a stopped step writes its progress file) and `relay_prompt()` (a fresh start for context). |
 | `styre/pi_extensions/` | The pi extensions every pi process gets with `--extension`: `cap-output.js`, `no-compaction.js`, `strip-thinking.js`. See "Context". Unit-tested in Node by `tests/test_pi_extensions.py`. |
 | `styre/agents.py` | `AGENTS_BODY`, the block written into the target repo's `AGENTS.md`. |
 | `styre/process.py` | `run()` for gates, `stream_pi()` for the agent (it also tracks the context and stops pi at a turn end past `relay_at`, returning `RELAY_RC`), `render_event()` / `elapsed()`, `_watch_idle()`, `kill_tree()`. |
@@ -684,6 +684,9 @@ failing fast. Three rules follow, and every mechanism below is one of them:
    old tool results alike.
 3. **When a step fills up, restart it from a file**, not from a summary: styre's own "state
    lives in files" applied within a phase.
+   The file is written by the step itself, in a handoff turn before the restart: on app's
+   phase 3 (2026-09-28) the builder reached 72k without ever writing it, and the first fresh
+   start spent 80 minutes re-reading the same files and re-probing the same library.
 
 | Mechanism | Where | What it does |
 | --- | --- | --- |
@@ -692,7 +695,7 @@ failing fast. Three rules follow, and every mechanism below is one of them:
 | No replayed thinking | `pi_extensions/strip-thinking.js` | drops earlier thinking from every request (modelhost ignores `preserve_thinking`) |
 | Whole gate on failure | `guard.verify()` | every gate command runs even after one fails; the fix prompt gets all failures at once |
 | Progress file | `AGENTS.md` block, `rundir.py` | the agent keeps `.styre/progress.md` (Done / Now / Next / Learned, under 40 lines) as it goes; cleared at phase start, archived as `phaseN.progress.md`, handed to every fix round and relay |
-| Relay | `process.stream_pi(relay_at=…)`, `runner.run_phase` | a step whose context passes **0.6 × contextWindow** (72k) is stopped at the next `turn_end` and continues in a fresh process with the task files and the progress file. Not a fix round; at most `MAX_RELAYS` (3), then the phase stops as too big. A step that had already written its state file when stopped is judged normally |
+| Relay | `process.stream_pi(relay_at=…)`, `runner.run_phase` | a step whose context passes **0.6 × contextWindow** (72k) is stopped at the next `turn_end`, gets one **handoff turn** in its own resumed session (still cached) that only writes the progress file, and continues in a fresh process with the task files and that file. Not a fix round; at most `MAX_RELAYS` (3), then the phase stops as too big. A step that had already written its state file when stopped is judged normally |
 | Resumed fix round | `runner.run_phase` | when the failed step ended below **0.5 × contextWindow** (60k), the fix round continues its session (`--session`), still in the server's cache, with a short prompt. Above it, a fresh process gets the phase prompt, the failures and the progress file |
 | Visibility | `summarize`, `watch` | relays, resumed rounds, cancelled and failed compactions are counted; a relay's `RELAY_RC` is never reported as pi failing |
 | Phase spread | `design.spread()`, `check` | flags a phase naming paths in 2+ top-level areas and 4+ paths — the shape of every phase that ran largest here — and prints this repo's history against the budget |
