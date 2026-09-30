@@ -72,3 +72,79 @@ def test_no_compaction_cancels_every_compaction(tmp_path):
       const verdict = handlers.session_before_compact({reason: "threshold"});
       console.log(JSON.stringify([Object.keys(handlers), verdict]));""")
     assert got == [["session_before_compact"], {"cancel": True}]
+
+
+# --- styre-tools.js: the agent's gate, progress and finish -----------------------------------
+
+def tools(tmp_path, body):
+    return run_js(tmp_path, "styre-tools.js", body)
+
+
+def test_the_gate_runs_every_command_and_reports_the_failures_structured(tmp_path):
+    got = tools(tmp_path, f"""
+      const r = await ext.runGate(["true", "echo out; echo err >&2; exit 3", "exit 1"],
+                                  {json.dumps(str(tmp_path))}, 30);
+      console.log(JSON.stringify(r));""")
+    assert got["passed"] is False
+    assert [(c["command"], c["exit"]) for c in got["commands"]] == [
+        ("true", 0), ("echo out; echo err >&2; exit 3", 3), ("exit 1", 1)]
+    first = got["failures"][0]
+    assert first["command"] == "echo out; echo err >&2; exit 3"
+    assert "out" in first["tail"] and "err" in first["tail"]  # stdout and stderr, as verify
+
+
+def test_a_gate_command_past_its_timeout_is_exit_124(tmp_path):
+    got = tools(tmp_path, f"""
+      const r = await ext.runGate(["sleep 5"], {json.dumps(str(tmp_path))}, 1);
+      console.log(JSON.stringify(r.commands[0]));""")
+    assert got["exit"] == 124
+
+
+def test_a_failure_tail_keeps_the_last_lines(tmp_path):
+    got = tools(tmp_path, f"""
+      const r = await ext.runGate(["seq 1 500; exit 1"], {json.dumps(str(tmp_path))}, 30);
+      console.log(JSON.stringify(r.failures[0].tail));""")
+    kept = got.strip().split("\n")
+    assert kept[-1] == "500" and len(kept) == 60
+
+
+def test_progress_is_written_in_its_shape_and_refused_past_40_lines(tmp_path):
+    got = tools(tmp_path, """
+      const ok = ext.formatProgress({done: "a", now: "b", next: "c", learned: "d"});
+      let err = null;
+      try { ext.formatProgress({done: "x\\n".repeat(41), now: "", next: "", learned: ""}); }
+      catch (e) { err = e.message; }
+      console.log(JSON.stringify([ok, err]));""")
+    assert got[0] == "Done: a\nNow: b\nNext: c\nLearned: d\n"
+    assert "40 lines" in got[1]
+
+
+def test_finish_writes_the_state_and_counts_the_failed_gate_runs(tmp_path):
+    got = tools(tmp_path, """
+      const runs = [{passed: false}, {passed: false}, {passed: true}];
+      console.log(JSON.stringify(ext.finishState({status: "DONE"}, 4, runs)));""")
+    assert got == {"phase": 4, "status": "DONE", "unmet_criteria": [], "fix_rounds_self": 2}
+
+
+def test_finish_refuses_done_on_a_red_or_missing_gate_and_with_unmet_criteria(tmp_path):
+    got = tools(tmp_path, """
+      const errs = [];
+      for (const [args, runs] of [[{status: "DONE"}, []],
+                                  [{status: "DONE"}, [{passed: true}, {passed: false}]],
+                                  [{status: "DONE", unmet_criteria: ["x"]}, [{passed: true}]],
+                                  [{status: "BLOCKED"}, [{passed: false}]]]) {
+        try { ext.finishState(args, 1, runs); errs.push(null); } catch (e) { errs.push(e.message); }
+      }
+      console.log(JSON.stringify(errs));""")
+    assert "styre_gate" in got[0]           # never ran the gate
+    assert "styre_gate" in got[1]           # the last run failed
+    assert "BLOCKED" in got[2]              # DONE with unmet criteria
+    assert "reason" in got[3]               # BLOCKED needs a reason
+
+
+def test_blocked_is_written_with_its_reason_and_criteria(tmp_path):
+    got = tools(tmp_path, """
+      console.log(JSON.stringify(ext.finishState(
+        {status: "BLOCKED", reason: "no API", unmet_criteria: ["a"]}, 2, [{passed: false}])));""")
+    assert got == {"phase": 2, "status": "BLOCKED", "reason": "no API",
+                   "unmet_criteria": ["a"], "fix_rounds_self": 1}

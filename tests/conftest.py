@@ -87,7 +87,7 @@ def styre(repo, fake_pi, pi_config):
     fake agent's actions; `default` is used for the names it does not mention.
     """
     def call(*args, plan=None, default="ok", path=None, timeout=120, claude_mode=None,
-             background=False, env_extra=None):
+             background=False, env_extra=None, cwd=None):
         env = dict(os.environ)
         env["STYRE_PI_CONFIG_DIR"] = str(pi_config)
         env["PATH"] = path if path is not None else fake_pi
@@ -100,9 +100,9 @@ def styre(repo, fake_pi, pi_config):
         env.update(env_extra or {})
         argv = [sys.executable, "-m", "styre", *args]
         if background:  # for tests that have to look at a run while it is still going
-            return subprocess.Popen(argv, cwd=repo, env=env, stdout=subprocess.PIPE,
+            return subprocess.Popen(argv, cwd=cwd or repo, env=env, stdout=subprocess.PIPE,
                                     stderr=subprocess.STDOUT, text=True)
-        return subprocess.run(argv, cwd=repo, env=env,
+        return subprocess.run(argv, cwd=cwd or repo, env=env,
                               capture_output=True, text=True, timeout=timeout)
     return call
 

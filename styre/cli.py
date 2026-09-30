@@ -7,6 +7,7 @@ from styre import __version__
 from styre.claude_review import claude_review
 from styre.config import DEFAULT_GATE_TIMEOUT, DEFAULT_RETRIES, DEFAULT_TIMEOUT, RunOptions
 from styre.design import advisories, describe, parse_phases, phase_context, validate
+from styre.gitops import not_at_root
 from styre.prompts import build_prompt
 from styre.review import describe_review
 from styre.rundir import RUNS, resolve
@@ -25,7 +26,8 @@ EXAMPLES = """examples:
   styre watch                           read-only web view of this repo's runs, live
   styre watch -t                        the same live panel, in this terminal
 
-Run it from inside the target repository: styre switches branches and commits there.
+Run it from the target repository's root: styre switches branches and commits there,
+and writes AGENTS.md and .styre/ into the directory it starts in.
 """
 
 
@@ -48,6 +50,10 @@ def cmd_check(args):
     """Validate the design, print it, and — once it is structurally runnable — cross-
     reference it against the repository. Both halves answer the same question, "is this
     safe to start tonight", so they are one command rather than two to remember."""
+    if (root := not_at_root()) is not None:
+        print(f"Run styre from the repository root, not a subdirectory:\n  cd {root}",
+              file=sys.stderr)
+        return 1
     text, phases = load_design(args.design)
     problems = validate(phases)
     print(describe(phases))

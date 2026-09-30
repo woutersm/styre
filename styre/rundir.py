@@ -11,6 +11,7 @@ the run directory is the archive.
 """
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -24,6 +25,8 @@ INBOX_NOTES = WORK / "notes-next.md"
 # Unlike the two files above it outlives a step — a fix round or a restart is handed it — so
 # it is cleared when a phase starts, not when a step does.
 INBOX_PROGRESS = WORK / "progress.md"
+# What styre-tools.js needs about the phase in progress: its number, gate and gate timeout.
+PHASE_INFO = WORK / "phase.json"
 
 
 def inbox_state(n):
@@ -136,6 +139,19 @@ def clear_inbox(n):
     that is not written this time round reads as missing rather than as stale success."""
     inbox_state(n).unlink(missing_ok=True)
     INBOX_NOTES.unlink(missing_ok=True)
+
+
+def gate_log(n):
+    """Every styre_gate run of phase n, one JSON line each; styre_finish counts the red ones."""
+    return WORK / f"phase{n}.gates.jsonl"
+
+
+def start_phase_tools(n, gate, gate_timeout):
+    """Hand phase n's number and gate to the agent's tools, with no gate runs recorded yet."""
+    PHASE_INFO.write_text(json.dumps({"phase": n, "gate": list(gate),
+                                      "gate_timeout": gate_timeout or None}) + "\n",
+                          encoding="utf-8")
+    gate_log(n).unlink(missing_ok=True)
 
 
 def clear_progress():

@@ -65,31 +65,26 @@ spend a fix round on it.
   its first and last lines; a note says what was left out and how to get it. Read ranges and
   narrow commands instead of asking for everything.
 
-## Your progress file
+## Your three styre tools
 
-Keep `.styre/progress.md` up to date while you work: overwrite it after every step that
-finishes something — a file written, a group of tests passing, a gate command green. If your
-process is restarted, or a fix round starts after you stop, this file and the working tree
-are all the next process gets, so it saves you from re-reading what you already know.
+- **`styre_gate`** runs the phase's gate: exactly the commands the orchestrator runs after you
+  stop, in the same shell with the same timeout. It returns whether it passed, each command's
+  exit code, and the last lines of each failure. Use it rather than running the gate commands
+  yourself; run a single test file with bash while you work on it.
+- **`styre_progress`** (`done`, `now`, `next`, `learned`) overwrites `.styre/progress.md`.
+  Call it after every step that finishes something — a file written, a group of tests
+  passing, a gate command green. If your process is restarted, or a fix round starts after
+  you stop, this file and the working tree are all the next process gets. At most 40 lines;
+  `learned` is for facts the tree does not show — a command that works, a trap, a decision.
+- **`styre_finish`** (`status`, `reason`, `unmet_criteria`) records the phase's result, last.
 
-Keep it under 40 lines, in this shape:
+## What you write when you finish
 
-```
-Done: what is finished and verified (files, tests, gate commands that pass)
-Now: what you are in the middle of
-Next: what is left, in order
-Learned: facts the tree does not show — a command that works, a trap, a decision
-```
-
-## The three files you write when you finish
-
-Beside `.styre/progress.md`, which you keep as you go:
-
-| File | Lifetime | Who reads it |
+| What | Lifetime | Who reads it |
 | --- | --- | --- |
 | `{DECISIONS}` | permanent, append-only, committed with the code | humans, later |
 | `.styre/notes-next.md` | one phase; overwrite it, never append | the next phase only |
-| `.styre/phaseN.state.json` | one phase | the orchestrator |
+| `styre_finish`, called last | one phase | the orchestrator |
 
 `{DECISIONS}` is for choices a reader could not infer from the code: ambiguities you
 resolved, options you rejected and why, constraints you discovered. Not a list of the files
@@ -106,22 +101,17 @@ summary of what you built, a count of passing tests, or a report that the gate w
 is wasted here: the gate is what proves that, and it has already run. If the *next* phase
 needs to know something, that belongs in `.styre/notes-next.md`, which it does read.
 
-`.styre/phaseN.state.json` is the machine-readable result:
+`styre_finish` takes `status` `DONE` or `BLOCKED`, a one-line `reason` (required when
+BLOCKED) and `unmet_criteria`, the exact text of each exit criterion you could not fully meet.
 
-```json
-{{"phase": 1, "status": "DONE" or "BLOCKED", "reason": "one line, required when BLOCKED",
-  "unmet_criteria": ["exact text of each exit criterion you could not fully meet"],
-  "fix_rounds_self": 0}}
-```
-
-`DONE` means every exit criterion is met and the whole gate passes, and requires
-`unmet_criteria` to be empty. Listing both fails the phase, so use `BLOCKED` instead. A
+`DONE` means every exit criterion is met and the whole gate passes: the tool refuses it
+unless your last `styre_gate` run passed and `unmet_criteria` is empty. A
 criterion you worked around, partly met, or could not verify is unmet; so is one you are
 unsure about. Recording that honestly is how the design gets fixed, and costs you nothing.
 Claiming a criterion you did not verify is the one outcome that wastes the whole run.
 
-`fix_rounds_self` is how many times you ran the gate, saw it fail and fixed it within the
-phase. It is not held against you; it shows which criteria are hard to hit.
+`styre_finish` counts your red `styre_gate` runs itself. They are not held against you;
+they show which criteria are hard to hit.
 {END}
 """
 

@@ -14,6 +14,17 @@ def in_repo():
     return git("rev-parse", "--git-dir")[0] == 0
 
 
+def not_at_root():
+    """The repository root when the current directory is inside a repository but not at its
+    root, else None. styre writes AGENTS.md and .styre/ into the current directory, and the
+    agent works relative to it, so a run from a subdirectory scatters both into it."""
+    rc, out = git("rev-parse", "--show-toplevel")
+    if rc != 0:
+        return None
+    root = Path(out.strip()).resolve()
+    return None if Path.cwd().resolve() == root else root
+
+
 def is_dirty():
     return bool(git("status", "--porcelain")[1].strip())
 

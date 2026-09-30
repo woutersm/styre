@@ -24,7 +24,7 @@ committed on a red gate.
 | `styre/claude_review.py` | Claude's read-only review of a finished run — see "The supervising layer". `claude_review()` writes `<run>/claude-review.md`; `CLAUDE_REVIEW` is the verified read-only invocation. |
 | `styre/touch.py` | Claude as the escape hatch — see "The supervising layer". `run_claude()`, `touch_prompt()`, `touch()`: one turn at a stuck phase. Invoked only by `runner.py`'s `_escalate()`, only when `--claude-touch` is passed. |
 | `styre/prompts.py` | `build_prompt()`, `fix_prompt()` (a fresh fix round), `resumed_fix_prompt()` (a resumed one), `handoff_prompt()` (a stopped step writes its progress file) and `relay_prompt()` (a fresh start for context). |
-| `styre/pi_extensions/` | The pi extensions every pi process gets with `--extension`: `cap-output.js`, `no-compaction.js`, `strip-thinking.js`. See "Context". Unit-tested in Node by `tests/test_pi_extensions.py`. |
+| `styre/pi_extensions/` | The pi extensions every pi process gets with `--extension`: `cap-output.js`, `no-compaction.js`, `strip-thinking.js`, and `styre-tools.js` — the agent's `styre_gate`, `styre_progress` and `styre_finish` tools, which write the same `.styre/` files the orchestrator reads (it hands them the phase in `.styre/phase.json`). See "Context". Unit-tested in Node by `tests/test_pi_extensions.py`; `styre-tools.js` was also run in real pi 0.87.1 against a scripted model server (2026-09-30). |
 | `styre/agents.py` | `AGENTS_BODY`, the block written into the target repo's `AGENTS.md`. |
 | `styre/process.py` | `run()` for gates, `stream_pi()` for the agent (it also tracks the context and stops pi at a turn end past `relay_at`, returning `RELAY_RC`), `render_event()` / `elapsed()`, `_watch_idle()`, `kill_tree()`. |
 | `styre/gitops.py` | Every git call, including `stage()` / `unstage_all()` (one path, and an emptied index, for the touch's separate design-fix commit) alongside `stage_all()`. |
@@ -49,8 +49,9 @@ The `styre` package is the source of truth for how things behave today.
 ## Where it runs
 
 styre is a standalone tool. It is not the repo being built. It must be invoked
-from inside the *target* git repository — the project the design describes — because it
-switches branches and commits there. This directory is not itself a git repo.
+from the root of the *target* git repository — the project the design describes — because it
+switches branches and commits there, and writes `AGENTS.md` and `.styre/` into the directory it
+starts in. `run` and `check` refuse a subdirectory (`gitops.not_at_root()`). This directory is not itself a git repo.
 
 ## Design file format
 

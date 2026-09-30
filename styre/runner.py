@@ -38,6 +38,7 @@ from styre.gitops import (
     head_sha,
     in_repo,
     is_dirty,
+    not_at_root,
     phase_commits,
     stage_all,
     work_tree_id,
@@ -65,6 +66,7 @@ from styre.rundir import (
     newest_session,
     open_run,
     read_progress,
+    start_phase_tools,
 )
 from styre.server import provider
 from styre.state import read_state, state_problem
@@ -168,6 +170,8 @@ def preflight(design_path, opts):
             "Leave packages out of that settings.json, and put no AGENTS.md beside it.")
     if not in_repo():
         raise PreflightError("Run this from inside a git repository.")
+    if (root := not_at_root()) is not None:
+        raise PreflightError(f"Run styre from the repository root, not a subdirectory:\n  cd {root}")
 
     WORK.mkdir(parents=True, exist_ok=True)
     add_excludes()
@@ -300,6 +304,7 @@ def run_phase(ctx, n):
     builder = run.prompt(n)
     builder.write_text(build_prompt(ctx.context(n), n, phase, notes), encoding="utf-8")
     clear_progress()
+    start_phase_tools(n, phase.gate, opts.gate_timeout)
 
     task = [builder]          # the prompt files that state the work of the current round
     prompts, session = task, None

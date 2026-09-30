@@ -59,8 +59,9 @@ an unbounded reasoning block is the fastest way to exhaust a KV cache. See CLAUD
 
 ## Use
 
-styre must be run **from inside the target repository** — the project the design describes —
-because it switches branches and commits there.
+styre must be run **from the root of the target repository** — the project the design
+describes — because it switches branches and commits there. `run` and `check` refuse to start
+in a subdirectory.
 
 ```
 styre check design.md                  # validate, print phases and gates, and find repo

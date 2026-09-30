@@ -344,6 +344,43 @@ def test_a_dirty_tree_is_refused(styre, repo, commits):
     assert "Working tree is not clean" in r.stderr
 
 
+def test_each_phase_hands_its_number_and_gate_to_the_agents_tools(styre, repo, commits):
+    """styre-tools.js reads .styre/phase.json; a gate log left by an earlier phase or run is
+    cleared, so fix_rounds_self counts only this phase's runs."""
+    stale = repo / ".styre" / "phase2.gates.jsonl"
+    stale.parent.mkdir(exist_ok=True)
+    stale.write_text('{"passed": false}\n', encoding="utf-8")
+    r = styre("run", "design.md", "--quiet")
+    assert r.returncode == 0, r.stdout + r.stderr
+    info = json.loads((repo / ".styre" / "phase.json").read_text(encoding="utf-8"))
+    assert info["phase"] == 2 and info["gate"] == ["test -f done.txt"]
+    assert info["gate_timeout"] > 0
+    assert not stale.exists()
+
+
+def test_a_run_from_a_subdirectory_is_refused(styre, repo, commits):
+    """From a subdirectory, styre would write its AGENTS.md block and .styre/ there, and the
+    agent would work relative to it: app's calendar run did exactly that from docs/."""
+    sub = repo / "docs"
+    sub.mkdir()
+    (sub / "design.md").write_text((repo / "design.md").read_text(encoding="utf-8"),
+                                   encoding="utf-8")
+    r = styre("run", "design.md", "--quiet", cwd=sub)
+    assert r.returncode == 1
+    assert "repository root" in r.stderr
+    assert str(repo.resolve()) in r.stderr  # says where to go
+    assert commits() == ["initial"]
+    assert not (sub / ".styre").exists() and not (sub / "AGENTS.md").exists()
+
+
+def test_check_from_a_subdirectory_is_refused(styre, repo):
+    sub = repo / "docs"
+    sub.mkdir()
+    r = styre("check", "../design.md", cwd=sub)
+    assert r.returncode == 1
+    assert "repository root" in r.stderr
+
+
 def test_the_gate_and_the_commit_are_narrated_as_they_happen(styre, repo, commits):
     """A gate is the longest silence in a phase; an unattended run should say what it is on."""
     r = styre("run", "design.md", "--quiet",
@@ -420,7 +457,7 @@ def test_every_pi_step_loads_styres_extensions(styre, repo):
     from styre.config import PI_EXTENSIONS
     styre("run", "design.md", "--quiet")
     names = {p.name for p in PI_EXTENSIONS}
-    assert names == {"cap-output.js", "no-compaction.js", "strip-thinking.js"}
+    assert names == {"cap-output.js", "no-compaction.js", "strip-thinking.js", "styre-tools.js"}
     for argv in argvs(repo):
         loaded = {argv[i + 1].rsplit("/", 1)[-1] for i, a in enumerate(argv) if a == "--extension"}
         assert loaded == names

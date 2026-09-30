@@ -58,18 +58,16 @@ Your phase is: {phase.title}
 Exit criteria. Make each one true and verify it yourself before you finish:
 {criteria}
 
-Gate. All must pass. Run them as you work; the orchestrator runs them again afterwards and
-the phase only counts as done if they pass:
+Gate. All must pass. Run them with `styre_gate` as you work; the orchestrator runs them again
+afterwards and the phase only counts as done if they pass:
 {gate}
 
-When you finish, write the three files AGENTS.md describes:
+When you finish, as AGENTS.md describes:
 
 - {DECISIONS}, appending a "## Phase {n}: {phase.short_title}" section
 - .styre/notes-next.md, overwritten
-- .styre/phase{n}.state.json, with "phase": {n}
-
-Re-read the rules for the state file in AGENTS.md before you write it. DONE with a non-empty
-unmet_criteria is rejected, and a criterion you could not verify is unmet.
+- then call `styre_finish`. DONE needs a green `styre_gate` run and no unmet criteria, and a
+  criterion you could not verify is unmet.
 """
 
 
@@ -94,9 +92,9 @@ from the beginning: read only what the fix needs.
 
 Do not drop features, do not skip, delete or weaken tests, and do not run git commit.
 If the fix involved a real choice, append it to your section of {DECISIONS}.
-Keep .styre/progress.md up to date as you go. When finished, rewrite
-.styre/phase{n}.state.json, raising "fix_rounds_self" by one and updating "status" and
-"unmet_criteria" to reflect where you actually got to.
+Keep your progress up to date with `styre_progress` as you go. When finished, run
+`styre_gate` and call `styre_finish` with the status and unmet criteria where you actually
+got to.
 
 {_progress_block(progress)}
 
@@ -110,8 +108,8 @@ def resumed_fix_prompt(n, phase, failure):
     return f"""Your work on '{phase.title}' did not pass verification when the orchestrator ran the
 gate. Fix the problem below; everything else about the phase is as you left it.
 Do not drop features, do not skip, delete or weaken tests, and do not run git commit.
-When finished, rewrite .styre/phase{n}.state.json, raising "fix_rounds_self" by one and
-updating "status" and "unmet_criteria" to reflect where you actually got to.
+When finished, run `styre_gate` and call `styre_finish` with the status and unmet criteria
+where you actually got to.
 
 {failure}
 """
@@ -126,9 +124,9 @@ def handoff_prompt(context, relay_at):
 this phase is given, and a fresh process will carry on from your progress file — it knows only
 what that file says, and it will not see this conversation.
 
-Now, in this turn, write .styre/progress.md — about 40 lines; do not trim it to a count —
-and do nothing else: no other file, no command, no state file. styre ends this process as
-soon as the file is written.
+Now, in this turn, call `styre_progress` — up to 40 lines in all; do not trim it to a count —
+and do nothing else: no file, no command, no `styre_finish`. styre ends this process as soon
+as the progress file is written.
 
 Done: what is finished and in the tree, by file.
 Now: the exact step you were on, and what is left of it.
@@ -148,8 +146,8 @@ stopped between two turns — not because anything failed. Everything it did is 
 tree; your progress file below is what it knew.
 
 Carry on from where the progress file says you are. Do not start over and do not re-read what
-it already records as done; check the tree only where you need to. Keep .styre/progress.md up
-to date as you go, and finish exactly as the attached task says.
+it already records as done; check the tree only where you need to. Keep your progress up to
+date with `styre_progress` as you go, and finish exactly as the attached task says.
 
 {_progress_block(progress)}
 """

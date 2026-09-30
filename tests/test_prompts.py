@@ -12,7 +12,7 @@ def test_builder_prompt_states_the_phase_contract():
     assert "Your phase is: Phase 2: Command line interface" in text
     assert "- reads stdin" in text and "  pytest -q" in text
     assert '## Phase 2: Command line interface"' in text  # decisions-log heading
-    assert ".styre/phase2.state.json" in text
+    assert "`styre_finish`" in text and "`styre_gate`" in text
 
 
 def test_builder_prompt_marks_an_empty_history():
@@ -31,4 +31,4 @@ def test_fix_prompt_carries_the_failure_and_the_rules():
     text = fix_prompt(2, PHASE, "Gate command failed: `pytest -q`")
     assert "Gate command failed: `pytest -q`" in text
     assert "do not run git commit" in text
-    assert '.styre/phase2.state.json' in text and "fix_rounds_self" in text
+    assert "`styre_gate`" in text and "`styre_finish`" in text
