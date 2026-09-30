@@ -1,156 +1,163 @@
 # styre
 
-An overnight phase orchestrator for the [pi coding agent](https://www.npmjs.com/package/@earendil-works/pi-coding-agent).
+Run a phased design through the [pi coding agent](https://www.npmjs.com/package/@earendil-works/pi-coding-agent)
+overnight, unattended, and wake up to one git commit per phase.
 
-Point it at a design document split into phases. It runs one fresh pi process per phase,
-serially, unattended. In the morning there is one git commit per phase and logs showing
-what happened.
+You write a design document split into phases. Each phase says what to build, what must be
+true when it is done, and which commands prove it: the **gate**. styre gives each phase to a
+fresh pi process, then runs the gate itself and checks the staged diff. The agent saying it is
+done counts for nothing; a phase is committed only when the gate is green and no test was
+skipped or deleted. When a gate fails, the agent gets the failure back and another try, a
+limited number of times.
 
-The agent says it is done; styre decides whether it is, by running the gate commands itself
-and inspecting the staged diff. Nothing is committed on a red gate.
+It was built for one person's nights with a local 27B model, and it shows: everything in it
+exists because a run failed without it. The reasoning, with measurements, is in
+[`CLAUDE.md`](https://github.com/woutersm/styre/blob/main/CLAUDE.md).
+
+> **Status: alpha.** Tested on macOS with pi 0.87 and local models served over an
+> OpenAI-compatible API. Expect rough edges anywhere else.
+
+## Requirements
+
+- Python 3.9+ (stdlib only, no dependencies)
+- git, and a target repository with a clean working tree
+- [pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) on `PATH`, with a model it can use
+- Node.js (pi needs it anyway)
 
 ## Install
 
-```
-uv tool install -e .     # editable: the command follows this source tree
-uv tool install .        # a copy, pinned to the source as it is right now
-```
-
-Use `-e` while styre itself is changing, which is the whole time so far.
-
-⚠️ **`--force` does not rebuild.** A plain `uv tool install` copies a *built wheel* into the
-tool's environment, and uv caches that wheel per source path and version. `--force` forces
-reinstalling the tool, not rebuilding it, so with the version unchanged it will happily
-reinstall a wheel built days ago — and `styre --version` and `styre check` both look perfectly
-healthy on a stale build. If you install non-editable, either bump the version or pass
-`--no-cache`, and verify by behaviour rather than by the command existing:
-
-```
-styre check <design> | tail -1                 # exists, proves nothing about which build
-wc -c .styre/runs/*/phase1.prompt.md           # an oversized prompt means a stale build
+```sh
+uv tool install styre          # or: pipx install styre
 ```
 
-`uv tool uninstall styre` removes it. `pip install -e .` works too.
+From source: `uv tool install git+https://github.com/woutersm/styre`.
 
-Stdlib only at runtime; pytest is the only dev dependency. Without installing, use
-`python -m styre` with the repository on `PYTHONPATH`.
+## Give pi a config of its own
 
-## A pi config of its own (required)
+styre runs pi with `PI_CODING_AGENT_DIR=~/.config/pi/styre` and refuses to start without it.
+An unattended run should not inherit your interactive setup: on one machine the operator's
+extensions and personal `AGENTS.md` were 47% of every request.
 
-styre runs pi with `PI_CODING_AGENT_DIR=~/.config/pi/styre`, and preflight refuses to start
-without it. An unattended run should not inherit an interactive setup: on one real machine
-the operator's config put 11.5 KB of web-search tool schemas and a 10.9 KB writing-style
-`AGENTS.md` into **every request of every turn** — 47% of a phase's context, for an agent
-with no network tests and no human reading its prose. Removing them cut the fixed overhead
-of a trivial prompt from 8,331 tokens to 1,639.
-
-```
+```sh
 mkdir -p ~/.config/pi/styre
 cp ~/.config/pi/agent/models.json ~/.config/pi/agent/auth.json ~/.config/pi/styre/
 echo '{}' > ~/.config/pi/styre/settings.json
 ```
 
-Keep it lean: **no `packages`, and no `AGENTS.md` beside it.** The target repo's own
-`AGENTS.md` still reaches the agent — pi finds it in the working directory.
+Keep it lean: no `packages`, and no `AGENTS.md` beside it. Pin the model in its
+`settings.json` (`defaultProvider`, `defaultModel`), and set the model's `contextWindow` in
+`models.json`: styre restarts a phase in a fresh process at 75% of it.
 
-If your model is served from a memory-constrained host, set a thinking budget there too;
-an unbounded reasoning block is the fastest way to exhaust a KV cache. See CLAUDE.md,
-"Where the model runs".
+## Quick start
 
-## Use
+From the **root** of the repository you want built:
 
-styre must be run **from the root of the target repository** — the project the design
-describes — because it switches branches and commits there. `run` and `check` refuse to start
-in a subdirectory.
-
-```
-styre check design.md                  # validate, print phases and gates, and find repo
-                                       #   code each phase's prose already names
-styre run design.md                    # run every phase
-styre run design.md --from-phase 2     # resume after a stop, in the latest run directory
-styre summarize                        # what happened in the last run
+```sh
+styre check docs/my-design.md    # validate; print phases, gates, prompt sizes and warnings
+styre run docs/my-design.md      # run every phase, one commit each
 ```
 
-`styre run --help` lists the rest: `--quiet`, `--retries`, `--timeout` (seconds of *silence*
-from pi, not total runtime), `--gate-timeout`, `--allow-test-changes`, `--branch`,
-`--allow-dirty`, `--reset-branch`, `--run-id`, and `--claude-touch` — which gives Claude one
-bounded turn at a phase that stopped, off by default because it is real spend.
+In the morning:
 
-While a phase runs, `<run>/logs/phaseN.log` is written live, so `tail -f` follows it.
+```sh
+styre summarize                  # what happened: per phase time, context, fix rounds, where to look
+git log --oneline overnight/my-design
+```
 
-## Design file format
+A stopped run resumes with `styre run docs/my-design.md --from-phase N`.
+
+## The design file
 
 Any preamble, then one block per phase:
 
 ````markdown
-## Phase 1: Title
-What to build.
+## Phase 1: The data and the API
+
+What to build, where, and the exact shapes of anything external.
 
 ### Exit criteria
-- a statement the agent must make true
+- a statement the agent must make true, checkable in the diff or the tests
 
 ### Gate
 ```
-uv sync --locked
+uv run ruff check .
 uv run pytest -q
 ```
 ````
 
-Exit criteria are plain prose for the agent. The **gate** is what the orchestrator enforces.
-A phase with no criteria list or no gate block is a hard error.
+A phase with no criteria list or no gate block is an error. Each phase's prompt carries the
+preamble, the list of phase titles, and **only its own section**. Earlier phases reach it
+through the working tree and a short note the previous phase leaves behind.
 
-A phase's prompt does not carry the whole document. It carries the **preamble**, an index of
-the phase titles with this one marked, and **that phase's section in full**. Earlier phases
-reach it only through the previous phase's `notes-next.md` and through the working tree
-itself. Three things follow when writing a design:
+How to cut a design so it runs well (size a phase by its work, keep each gate green on its
+own phase's work, give a new library's API in the phase that uses it) is in
+[`writing-designs.md`](https://github.com/woutersm/styre/blob/main/writing-designs.md). [`example-design.md`](https://github.com/woutersm/styre/blob/main/example-design.md) is a small
+two-phase example.
 
-- Everything in the preamble is sent to every phase, so keep it to what every phase needs.
-- **Never tell a phase to read a reference document.** One preamble line — *"the design
-  means `docs/agent-design.md`, read it first"* — turned a 2.3 KB phase into a 44 KB
-  context, and the local model returned an empty response. If a reference document is
-  organised per module, fold each section into its phase and stop shipping the document.
-- Material meant for a human after the last phase belongs in its own file, not in the
-  preamble and not after the last `## Phase` heading (anything there is folded into that
-  phase).
+## What a phase goes through
 
-Keep phases small. A phase whose title contains "and" is usually two phases: one that was
-split in half went from failing three times to committing on the first try.
+1. styre writes its rules into the target repo's `AGENTS.md`, between
+   `<!-- styre:begin -->` markers. Your own text in that file is kept.
+2. A fresh pi process gets the phase's prompt. The agent works in the repo and has three
+   tools of styre's:
+   - `styre_gate` runs the phase's gate and returns what failed
+   - `styre_progress` keeps a progress file a restarted process can continue from
+   - `styre_finish` records DONE or BLOCKED; it refuses DONE until the gate is green
+3. When the agent's context passes 75% of the model's window, styre stops it between two turns
+   and continues in a fresh process from the progress file.
+4. styre runs every gate command itself and checks the staged diff for new skip/xfail markers
+   or removed tests.
+5. On a failure, the agent gets a fix round with the whole failure, up to `--retries` (default 2).
+6. All green: one commit, titled after the phase. Otherwise the run stops and leaves the work
+   uncommitted.
 
-`example-design.md` is a two-phase example (a `wordfreq` CLI) for testing.
+## What it writes into your repository
 
-## Layout
-
-| Module | What it is |
+| What | Where |
 | --- | --- |
-| `styre/cli.py` | Argument parsing and the `check` / `run` / `summarize` subcommands |
-| `styre/config.py` | Constants, `PI_CONFIG_DIR`, and `RunOptions` |
-| `styre/design.py` | Parsing a design into `Phase` objects, validating it, and building each phase's prompt excerpt |
-| `styre/prompts.py` | The builder and fix-round prompts |
-| `styre/agents.py` | The `AGENTS.md` block written into the target repo |
-| `styre/review.py` | Cross-referencing a phase's prose against existing test files |
-| `styre/process.py` | Running children, and rendering pi's JSON event stream |
-| `styre/gitops.py` | Git operations |
-| `styre/guard.py` | The gate, and the test-tampering guard |
-| `styre/state.py` | Reading and judging `phaseN.state.json` |
-| `styre/rundir.py` | The per-run directory under `.styre/runs/` |
-| `styre/timeline.py` | `timeline.jsonl`, the orchestrator's own record of a run |
-| `styre/summarize.py` | Reading a finished run back off disk. Calls no model |
-| `styre/touch.py` | Claude's one bounded turn at a stuck phase (`--claude-touch`) |
-| `styre/runner.py` | Preflight and the phase loop |
-| `orchestrate.py` | Deprecated shim onto `styre.cli` |
+| A branch | `overnight/<design name>` (`--branch` to choose) |
+| One commit per phase | on that branch |
+| The rules block | `AGENTS.md`, between styre's markers |
+| The agent's decision log | `docs/decisions.md`, append-only, committed; no later phase reads it |
+| Run records | `.styre/runs/<id>/`: prompts, logs, pi's event stream, `timeline.jsonl`, `summary.md` |
 
-## Tests
+`.styre/` and common caches are added to `.git/info/exclude`, so nothing of styre's is
+committed except `AGENTS.md` and the agent's own work.
 
-```
-uv run --with pytest python -m pytest -q
-```
+## Commands
 
-`tests/fake_pi.py` and `tests/fake_claude.py` are test doubles installed on `PATH` as `pi`
-and `claude`, so the whole loop — `--claude-touch` included — runs without a model. `tests/fixtures/*.jsonl` is real captured pi output; parsers are written
-against it, not against assumptions.
+| Command | |
+| --- | --- |
+| `styre check <design>` | Validate, print each phase's gate and prompt size, warn about shapes that fail, and find existing test code the phases name |
+| `styre run <design>` | Run it. `--from-phase N` resumes, `--retries`, `--timeout` (seconds of *silence*, default 7200), `--gate-timeout`, `--branch`, `--quiet`; `--help` for all |
+| `styre summarize [run]` | The report for the latest run, or a named one |
+| `styre watch` | A read-only web view of this repo's runs on `127.0.0.1:8765`; `watch -t` draws it in the terminal |
+| `styre claude-review [run]` | Optional: Claude reviews a finished run's commits, read-only |
+
+### Optional: Claude as a last resort
+
+`--claude-touch` gives Claude (the `claude` CLI) one turn at a phase the local model could not
+finish. `--claude-review` and `styre claude-review` have it review a finished run, read-only,
+at most $5. Both are off by default because they spend real money.
 
 ## Safety
 
-pi has no sandbox and runs commands without asking. Run overnight jobs in an ordinary clone
-of the target repo, with only the credentials the job needs, and set a spending limit with
-the model provider. styre limits time per run but does not track spend.
+pi has no sandbox and runs commands without asking. Run overnight jobs in an ordinary clone of
+the target repository, with only the credentials the job needs. styre bounds time (an idle
+timeout per step, a timeout per gate command) but not spend: set a limit with your model
+provider.
+
+## Development
+
+```sh
+uv run --with pytest python -m pytest -q     # the suite; the end-to-end tests drive a fake pi
+uvx ruff check .
+```
+
+`tests/fake_pi.py` and `tests/fake_claude.py` stand in for pi and Claude, so the whole loop
+runs without a model. [`CLAUDE.md`](https://github.com/woutersm/styre/blob/main/CLAUDE.md) is the design record: how it works, what was
+measured, and which decisions are settled. [`TODO.md`](https://github.com/woutersm/styre/blob/main/TODO.md) is what is open.
+
+## License
+
+MIT, see [LICENSE](https://github.com/woutersm/styre/blob/main/LICENSE).

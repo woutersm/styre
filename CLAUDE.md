@@ -36,7 +36,6 @@ committed on a red gate.
 | `styre/server.py` | The model server's `/status` for the live panel — `watch`'s one outbound read. Finds the server from styre's pi config (default provider's `baseUrl` and `apiKey`), caches the answer 5 s, and gives no line for a server without `/status` (mlxserve). |
 | `styre/timeline.py` | `Timeline`: the append-and-flush writer behind `<run>/timeline.jsonl`. |
 | `styre/runner.py` | `preflight()`, the `Ctx` bundle the loop is threaded with, the phase loop (`run_phase`, `orchestrate`), and `_escalate()` — the Claude-touch bounding. |
-| `orchestrate.py` | Deprecated shim mapping the old single-command form onto the subcommands. |
 | `pyproject.toml` | Packaging and the `styre` entry point; ruff and pytest config. No runtime dependencies. |
 | `example-design.md` | Two-phase example design (a `wordfreq` CLI; uv, pytest, ruff) for testing. |
 | `writing-designs.md` | How to shape a design *before* a run: sizing a phase by its work, cutting phases where each gate stays green, where the ripple goes, and reading a stop back into a design change. Every rule names the run that taught it. For the human writing the design — never named in a design, or `advisories()` flags it. |
@@ -51,7 +50,8 @@ The `styre` package is the source of truth for how things behave today.
 styre is a standalone tool. It is not the repo being built. It must be invoked
 from the root of the *target* git repository — the project the design describes — because it
 switches branches and commits there, and writes `AGENTS.md` and `.styre/` into the directory it
-starts in. `run` and `check` refuse a subdirectory (`gitops.not_at_root()`). This directory is not itself a git repo.
+starts in. `run` and `check` refuse a subdirectory (`gitops.not_at_root()`): run from `docs/`, a app run
+once wrote its `AGENTS.md` block, `.styre/` and the agent's symlinks there (2026-09-30).
 
 ## Design file format
 
@@ -114,10 +114,13 @@ show up hours into a night.
    ambiguity cost two days: the model host was rejecting the prefill for memory
    (`predicted peak would exceed prefill safety cap 37.8GB`) while styre reported "no state
    file written". See `runner.empty_response()`.
-4. The agent ends by writing three files: `docs/decisions.md` (append-only, committed),
-   `.styre/notes-next.md` (overwritten, read only by the next phase), and
-   `.styre/phaseN.state.json` (`status`, `reason`, `unmet_criteria`, `fix_rounds_self`).
-   `DONE` together with a non-empty `unmet_criteria` is rejected as contradictory. Those two
+4. The agent ends by appending to `docs/decisions.md` (committed), overwriting
+   `.styre/notes-next.md` (read only by the next phase), and calling `styre_finish`, which
+   writes `.styre/phaseN.state.json` (`status`, `reason`, `unmet_criteria`,
+   `fix_rounds_self`). The tool refuses `DONE` unless the agent's last `styre_gate` run passed
+   and `unmet_criteria` is empty, and it counts `fix_rounds_self` from the recorded gate runs
+   rather than taking the agent's word (`styre-tools.js`, 2026-09-30). `state.py` still
+   rejects a contradictory file, since a fake or an older agent can write one by hand. Those two
    short paths are a drop box, not the archive: once pi stops, `rundir.collect()` moves them
    into the run directory as `phaseN.state.json` and `phaseN.notes-next.md`. The agent's
    contract stays a stable path it can be told about in a committed `AGENTS.md`, which cannot
@@ -170,9 +173,6 @@ live), `--retries`, `--timeout`, `--gate-timeout`,
 default, real automatic spend against the `claude` CLI when it is on), `--claude-review`
 (the same layer, after the last phase: a read-only review, at most $5).
 
-`orchestrate.py` still works, translating the old single-command form onto the subcommands
-with a deprecation notice on stderr.
-
 ## Preflight
 
 Before phase 1: the design must parse, `pi` must be on PATH, `AGENTS.md` is written or
@@ -194,7 +194,7 @@ tokens, and only 32% of it was styre's:
 | | chars | ~tokens |
 | --- | --- | --- |
 | `pi-web-access` tool schemas (`web_search`, `fetch_content`, `source_check`, `get_search_content`) | 11,551 | 3,160 |
-| the operator's global `AGENTS.md` (writing style, "reader has ADHD") | 10,888 | 2,980 |
+| the operator's global `AGENTS.md` (writing-style rules) | 10,888 | 2,980 |
 | styre's phase prompt | 11,316 | 3,090 |
 | styre's `AGENTS.md` | 4,007 | 1,100 |
 | pi's own tools and rules | 8,500 | 2,320 |
@@ -584,6 +584,12 @@ are not complexity to be trimmed. Everything else is.
 - One directory per run; the agent's own two output paths stay short and stable, and the
   orchestrator archives them. A committed `AGENTS.md` cannot name a run id, and a long path
   is one more thing for the model to get wrong.
+- The agent reports through tools, not hand-written files (2026-09-30): `styre_gate`,
+  `styre_progress`, `styre_finish` in `styre-tools.js`, over the same `.styre/` paths the
+  orchestrator already read, so nothing downstream changed. The gate tool is a convenience
+  and a check on `DONE`; the orchestrator still runs the gate itself, and that run is the
+  only one that decides. Measured on app before the change, the agent's own gate runs cost
+  ~1k tokens a phase, so the tools were not a context saving and are not sold as one.
 - The pi invocation is fixed: `pi -p --mode json`, the constant `PI`, plus per step
   `--session-dir` (or `--session <file>` for a resumed fix round), `--name`, one
   `--extension` per file in `styre/pi_extensions/`, and the prompt files. No `--pi-cmd`, no
@@ -813,6 +819,12 @@ What stays, deliberately:
 - Run the suite: `uv run --with pytest python -m pytest -q`. The end-to-end tests drive the
   real phase loop against `tests/fake_pi.py`, so a behavior change shows up there. Add a case
   for anything new rather than only testing it by hand.
+- Lint with `uvx ruff check .`. The extension tests need `node` on PATH and skip without it.
+  The package claims Python 3.9+; check that when touching syntax:
+  `uv run --isolated --python 3.9 --with pytest python -m pytest -q`.
+- A release: bump `__version__`, run the suite and ruff, then `uv build` and
+  `uvx twine check dist/*`; the wheel must hold `styre/pi_extensions/*.js`
+  (`unzip -l dist/*.whl`). Upload with `uvx twine upload dist/*`.
 
 ## Token accounting
 
@@ -878,8 +890,8 @@ Verified 2026-09-20. "Local" here means on the LAN, not on the machine running s
 
 | | |
 | --- | --- |
-| styre and pi | MacBook Air M2 (`Mac14,2`), 192.168.2.22, on Wi-Fi |
-| the model | a second Mac, M4 Pro / 48 GB, at `http://192.168.2.31:8000/v1` |
+| styre and pi | MacBook Air M2 (`Mac14,2`), on Wi-Fi |
+| the model | a second Mac, M4 Pro / 48 GB, serving an OpenAI-compatible `/v1` on port 8000 |
 
 The endpoint is the `mlxserve` provider's `baseUrl` in `~/.config/pi/agent/models.json`; it is
 OpenAI-compatible and wants an API key, which pi holds in `auth.json`. That directory, not
@@ -903,7 +915,7 @@ server advertises. The mlxserve models stay listed in `models.json`, so going ba
 settings change. Serve it with `modelhost serve --model mlx-community/Qwen3.8-27B-4bit --host
 0.0.0.0 --api-key <key> --max-cache-disk 16G`.
 
-Why, measured with `~/Dev/model-bench` on 2026-09-27/28:
+Why, measured with a local benchmark on 2026-09-27/28:
 
 - **Decode 2-3x mlxserve's on the same size of model** (oQ4e): 56 vs 28 tok/s at 2k, 42 vs 14
   at 64k, 31 vs 10.6 at 96k. The gap grows with context.
@@ -912,6 +924,15 @@ Why, measured with `~/Dev/model-bench` on 2026-09-27/28:
   where each step waits a median ~6 s for its first token, a phase is ~1.5x faster, not 3x.
 - The prompt cache works across pi's steps (366k cached against 22.7k new prefill over a
   26-step phase), and a styre phase committed first try with a perfect hidden-oracle score.
+
+**The 90k relay line, re-checked against modelhost's own request log (2026-09-30, 1,939
+requests):** decode is flat at 27-34 tok/s from 20k to 120k and falls to 21 above 120k;
+with the prompt cache hitting, time to first token stays 4-8 s at any size; only prefill of
+*new* tokens slows, 119 tok/s at 15k to 76 at 85k. A cache miss costs the whole context at
+~80 tok/s — 1,520 s at 132k. So 0.75 of 120k keeps a margin under the 120k knee, and
+0.875 (105k) would be safe but rarely binds: a well-cut phase peaks at 73-75k. The same log
+showed a second client on the server (app's mail judge) slowing a styre run's decode by
+~11% whenever they overlapped: keep other clients off the model host during a run.
 
 ⚠️ **modelhost has no thinking budget.** Effort names go to the template, "not token budgets"
 (its DEVELOPMENT.md), and every budget field is silently ignored. On a large one-shot

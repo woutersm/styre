@@ -258,3 +258,13 @@ def test_history_lines_measure_this_repo_against_the_budget():
     assert "1 of these phases went past that:" in lines[1]
     assert lines[2].split() == ["110,000", "Phase", "2:", "Large", "(run-a)"]
     assert history_lines([], 72000) == []
+
+
+def test_a_resumed_run_reports_the_versions_it_last_ran_on(tmp_path):
+    """Run.first is where the run began; the versions are the ones the latest invocation used."""
+    start = next(e for e in TIMELINE if e["event"] == "run_start")
+    resumed = {**start, "ts": "2026-09-21T08:00:00+02:00", "pi_version": "0.87.1", "styre": "0.9.0"}
+    text = render(collect(make_run(tmp_path, timeline=[*TIMELINE, resumed])))
+    header = text.split("\n## ", 1)[0]
+    assert "pi 0.87.1" in header and "styre 0.9.0" in header
+    assert "0.85.1" not in header and "started 2026-09-20 22:00" in header

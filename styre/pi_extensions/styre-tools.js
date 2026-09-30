@@ -25,12 +25,15 @@ const tail = (text) => {
   return lines.slice(-TAIL_LINES).join("\n").slice(-TAIL_CHARS);
 };
 
-// One command as `process.run(cmd, shell=True)` runs it: /bin/sh, stdout and stderr merged,
-// its own process group so a timeout takes the whole tree, exit 124 on a timeout.
+const WINDOWS = process.platform === "win32";
+
+// One command as `process.run(cmd, shell=True)` runs it: the platform's shell (/bin/sh, or
+// cmd.exe on Windows), stdout and stderr merged, its own process group on POSIX so a timeout
+// takes the whole tree, exit 124 on a timeout.
 function runOne(command, cwd, timeoutS) {
   return new Promise((resolve) => {
     const started = Date.now();
-    const child = spawn("/bin/sh", ["-c", command], { cwd, detached: true });
+    const child = spawn(command, { cwd, shell: true, detached: !WINDOWS });
     let out = "";
     child.stdout.on("data", (d) => (out += d));
     child.stderr.on("data", (d) => (out += d));
@@ -38,7 +41,10 @@ function runOne(command, cwd, timeoutS) {
     const timer = timeoutS
       ? setTimeout(() => {
           timedOut = true;
-          try { process.kill(-child.pid, "SIGKILL"); } catch { /* already gone */ }
+          try {
+            if (WINDOWS) child.kill();
+            else process.kill(-child.pid, "SIGKILL");
+          } catch { /* already gone */ }
         }, timeoutS * 1000)
       : null;
     child.on("close", (code) => {

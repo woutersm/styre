@@ -356,11 +356,14 @@ def table(header, rows):
 
 def header_lines(summary):
     first, last = summary.first, summary.last
+    # The design and branch are where the run began; the versions are what it last ran on,
+    # since a run resumed over days may have been upgraded between invocations.
+    latest = summary.starts[-1] if summary.starts else {}
     out = [f"# Run {summary.id}", ""]
     facts = [f"design {first['design']}" if first.get("design") else None,
              f"branch {first['branch']}" if first.get("branch") else None,
-             f"pi {first['pi_version']}" if first.get("pi_version") else None,
-             f"styre {first['styre']}" if first.get("styre") else None]
+             f"pi {latest['pi_version']}" if latest.get("pi_version") else None,
+             f"styre {latest['styre']}" if latest.get("styre") else None]
     if any(facts):
         out.append(", ".join(f for f in facts if f))
     started, ended = parse_ts(first.get("ts")), parse_ts(last.get("ts"))

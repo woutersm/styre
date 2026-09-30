@@ -10,32 +10,8 @@ a retelling of something CLAUDE.md now explains were dropped rather than archive
 
 ## Open — in styre
 
-- [ ] **`summarize` reads versions from the first invocation.** `Run.first` is `starts[0]`,
-      so a run resumed eight times over two days printed `pi 0.86.1, styre 0.2.0` while it
-      had actually executed on 0.87.0 / 0.11.0. Take them from the last `run_start`.
-      (`styre/summarize.py:152`)
-- [ ] **Delete `orchestrate.py`.** The deprecated shim. No code references it — only
-      `CLAUDE.md`'s own file table and the two doc paragraphs describing it.
 - [ ] **No test uses real `uv`.** The fixture gate is `test -f done.txt`, so the end-to-end
       suite skips on Windows and never exercises a slow, realistic gate.
-
-## Open — outside styre
-
-Not styre's code, but styre's problem when they are wrong. See CLAUDE.md, "Where the model
-runs".
-
-- [ ] **`models.json` `maxTokens: 32768`** — one turn may still be larger than the whole KV
-      budget. With thinking capped at 8,192 a legitimate turn is ~12k; set **16384** as the
-      backstop the thinking budget cannot bypass.
-- [ ] **Raise `thinkingBudgets.medium` 8192 → 12288** once phase 6 of the current app run
-      settles. The cap is now binding: phase 6 produced a turn of 8,256 output tokens where
-      phase 5's largest was 6,376. Not back to 16384 — the runaway that started all this was
-      ~19,600. If raising it only moves the ceiling, split the phase instead.
-- [ ] **Pre-split `agent-todo.md` phase 9**, "The loop, **and** switching the gateway over",
-      10 criteria. A title containing "and" is usually two phases; splitting phase 4 took it
-      from three failures to a first-try commit.
-- [ ] **Ask mlxserve why TurboQuant converts only 15 of 64 cache layers.** At full conversion,
-      8-bit KV would be worth several more GB on a host that has none to spare.
 
 ## Known limitations — understood, not scheduled
 
@@ -77,6 +53,10 @@ Write these down so they are not rediscovered at 3am. None is currently worth co
 
 ## Done
 
+- **2026-09-30** — the agent's `styre_gate`, `styre_progress` and `styre_finish` tools;
+  `run` and `check` refuse to start outside the repository root; `summarize` reports the
+  versions of the latest invocation; `orchestrate.py` deleted; MIT license and packaging
+  metadata for a first public release.
 - **2026-09-23** — `styre check` prints a prompt size per phase and warns about the two
   shapes that fail: prose telling the agent to read a document, and an outsized phase. On
   app it flags exactly phases 2 and 9, and nothing else.
@@ -98,4 +78,4 @@ Write these down so they are not rediscovered at 3am. None is currently worth co
   step, `timeline.jsonl`, one directory per run, `styre summarize`, and the pytest suite
   against `fake_pi.py` / `fake_claude.py`.
 - **Acceptance** — the full loop has run repeatedly against real pi on a real 12-phase
-  design (`~/Dev/app`), which is a harder test than `example-design.md` ever was.
+  design (app, a personal project), which is a harder test than `example-design.md` ever was.
