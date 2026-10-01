@@ -750,6 +750,15 @@ Phase 9 needs will not survive; the answer then is to put it in the design, by h
 
 ### Tool results are the biggest thing in a phase, and `read` is most of them
 
+**Re-measured 2026-09-30, and `read` was not most of them: `bash` was.** On app's eight-phase
+today run the agent read files mostly through `bash` — `cat`, `sed -n`, `head` were 62% of
+263k tokens of command output, against ~97k through `read` — and 37% of file reads were a file
+already read in that phase. The bash cap (first 60, last 90 lines) turns `cat` on a long file
+into its two ends, and the agent then reads the middle in pieces: `api/app.py` 18 times in one
+phase, `store.py` 18 times in another. AGENTS.md now says: `grep -n`, then `read` with
+`offset`/`limit`; never `cat` a file through `bash`. The other half of the fix belongs to the
+target repo: a 700-line module costs every phase that touches it.
+
 Measured over four phases of app's reminders run (2026-09-25), by share of the characters a
 phase generated or received:
 

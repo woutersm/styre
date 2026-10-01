@@ -268,3 +268,36 @@ def test_a_resumed_run_reports_the_versions_it_last_ran_on(tmp_path):
     header = text.split("\n## ", 1)[0]
     assert "pi 0.87.1" in header and "styre 0.9.0" in header
     assert "0.85.1" not in header and "started 2026-09-20 22:00" in header
+
+
+def with_agent_gates(run, n, results):
+    """Append styre_gate calls to a phase's events, as styre-tools.js reports them."""
+    path = run.events(n)
+    with open(path, "a", encoding="utf-8") as f:
+        for i, passed in enumerate(results):
+            line = {"type": "tool_execution_end", "toolCallId": f"g{i}", "toolName": "styre_gate",
+                    "isError": False,
+                    "result": {"content": [{"type": "text", "text": json.dumps({"passed": passed})}]}}
+            f.write(json.dumps({"ts": "2026-09-20T22:20:00+02:00", "line": json.dumps(line)}) + "\n")
+
+
+def quiet_timeline(self_rounds):
+    timeline = [e for e in TIMELINE if e["event"] not in ("gate_end", "pi_end")]
+    return [{**e, "rounds": 0, "fix_rounds_self": self_rounds} if e["event"] == "phase_end" else e
+            for e in timeline]
+
+
+def test_a_red_styre_gate_on_the_way_to_green_is_not_called_out(tmp_path):
+    """With styre_gate, running the gate early and seeing it red is the workflow, not a sign
+    of an unclear criterion (app's today run, 2026-09-30: 6 of 8 phases flagged for it)."""
+    run = make_run(tmp_path, timeline=quiet_timeline(1))
+    with_agent_gates(run, 1, [False, True])
+    text = render(collect(run))
+    assert "by itself" not in text and "red" not in text
+
+
+def test_a_styre_gate_that_stayed_red_is_called_out(tmp_path):
+    run = make_run(tmp_path, timeline=quiet_timeline(3))
+    with_agent_gates(run, 1, [False, False, False, True])
+    text = render(collect(run))
+    assert "the agent's own gate was red 3 times before it passed" in text

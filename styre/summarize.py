@@ -20,6 +20,9 @@ from datetime import datetime
 from styre.process import RELAY_RC
 from styre.state import read_state
 
+# A styre_gate that was red this many times in one phase is worth a look in the report.
+RED_GATES_WORTH_A_LOOK = 3
+
 
 def read_jsonl(path):
     """Yield the JSON objects in a file, skipping anything unparseable. A half-written last
@@ -157,6 +160,7 @@ class Phase:
     guard_problems: list[str] = field(default_factory=list)
     usage: Usage = field(default_factory=Usage)
     tool_errors: dict = field(default_factory=lambda: defaultdict(int))  # tool name -> count
+    agent_gates: list = field(default_factory=list)  # each styre_gate run's `passed`, in order
     relays: list = field(default_factory=list)       # (step, context) per fresh start for context
     resumed: int = 0                                 # fix rounds that continued their session
     compactions_failed: list = field(default_factory=list)  # pi's own error per failed one
@@ -253,6 +257,13 @@ def read_phase_events(run, phase):
         kind = e.get("type")
         if kind == "tool_execution_end" and e.get("isError"):
             phase.tool_errors[e.get("toolName") or "?"] += 1
+        elif kind == "tool_execution_end" and e.get("toolName") == "styre_gate":
+            text = "".join(c.get("text", "") for c in (e.get("result") or {}).get("content", [])
+                           if isinstance(c, dict))
+            try:
+                phase.agent_gates.append(bool(json.loads(text)["passed"]))
+            except (ValueError, KeyError, TypeError):
+                pass
         elif kind == "compaction_end":
             # pi's own compaction. styre cancels it (aborted); a failed one is the 2026-09-28
             # shape — a summary request the model could not finish — and worth reading about.
@@ -448,7 +459,14 @@ def where_to_look(summary):
             out.append(f"- test guard{f' ({times}x)' if times > 1 else ''}: {oneline(problem)}")
         for unmet in p.unmet:
             out.append(f"- unmet criterion: {unmet}")
-        if p.self_rounds and not p.rounds:
+        # With styre_gate, a red run on the way to green is the workflow; only a gate that
+        # stayed red is worth a look. Without it, fix_rounds_self is the agent's own claim.
+        red = p.agent_gates.count(False)
+        if p.agent_gates and red >= RED_GATES_WORTH_A_LOOK:
+            out.append(f"- the agent's own gate was red {red} times before it passed: a criterion "
+                       "that is hard to hit, or one the design states less clearly than the gate "
+                       "enforces.")
+        elif not p.agent_gates and p.self_rounds and not p.rounds:
             out.append(f"- the agent fixed {p.self_rounds} gate failure(s) by itself and the "
                        "orchestrator saw none: a criterion the design states less clearly "
                        "than the gate enforces.")

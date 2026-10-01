@@ -48,22 +48,21 @@ spend a fix round on it.
   branch. The orchestrator owns the git history.
 - Read what earlier phases wrote in the working tree rather than a description of it. The
   notes you are handed deliberately do not inventory the repository.
-- **Read narrowly.** A file you read whole stays in your context for the rest of the phase,
-  and tool results are the largest thing in it — 32-45% of a measured phase, with single
-  reads of 5,000-6,000 tokens. Use `grep` to find the lines you need and read a range around
-  them; read a file end to end only when you are about to rewrite it end to end. The same
-  goes for a command's output: pipe it through `head`, `tail` or `grep` rather than printing
-  a whole test log back into the conversation. Throughput falls as your context grows — the
-  same phase decodes at 10 tokens a second early and 6 late — so this is your own speed you
-  are spending, not just the machine's memory.
+- **Read narrowly, and read files with `read`.** A file you read stays in your context for
+  the rest of the phase, and reading is the largest thing in it: on a measured run, reading
+  files was 62% of all command output, and a third of it was a file read again. Find the
+  lines first with `grep -n`, then `read` the file with `offset` and `limit` around them. Do
+  not `cat` or `sed` a file through `bash`: a command's output keeps only its first 60 and
+  last 90 lines, so a long file comes back as its two ends and you end up reading it again
+  in pieces. Pipe a command's own output through `head`, `tail` or `grep` rather than
+  printing a whole test log. Every token you add makes each later turn slower to start.
 - **Never read anything under `.styre/`.** It is the orchestrator's working directory, not
   yours: run logs, timelines, prompts and other phases' files. Nothing in it helps you build
   this phase, and reading it spends the context you need for the work. Write exactly the
   files named below there, and nothing else — no listing it, no looking for another phase's
   state file to copy. The formats you need are below, in full.
-- **Tool output is capped.** A `read` returns at most 300 lines and a command's output keeps
-  its first and last lines; a note says what was left out and how to get it. Read ranges and
-  narrow commands instead of asking for everything.
+- **Tool output is capped.** A `read` returns at most 300 lines and a command's output its
+  first 60 and last 90; a note says what was left out and how to get it.
 
 ## Your three styre tools
 
