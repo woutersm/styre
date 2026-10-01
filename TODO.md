@@ -22,6 +22,11 @@ a retelling of something CLAUDE.md now explains were dropped rather than archive
       server (app's mail judge) slowed a styre run's decode by ~11% whenever they overlapped,
       and the client's own requests timed out (2026-09-30). styre cannot stop another program,
       but it can say so at the start of a run when `/status` shows active requests.
+- [ ] **`check`'s new-dependency warning misreads names as packages.** On app's split design
+      (2026-10-01) it flagged `create-app`, `deps.py` and `now` — a function, a file the phase
+      creates, and an attribute — as libraries "this repo does not depend on yet", and asked
+      for a usage snippet the phase already had. Match backticked names against the
+      dependency manifest's own vocabulary, not any lowercase identifier.
 - [ ] **No test uses real `uv`.** The fixture gate is `test -f done.txt`, so the end-to-end
       suite never exercises a slow, realistic gate. Low value; keep only if a gate bug slips
       through.
