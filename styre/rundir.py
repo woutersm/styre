@@ -84,11 +84,6 @@ class RunDir:
     def timeline(self):
         return self.root / "timeline.jsonl"
 
-    @property
-    def review(self):
-        """`styre review`'s output, written automatically at the start of every run."""
-        return self.root / "review.md"
-
 
 def _make(root):
     (root / "logs").mkdir(parents=True, exist_ok=True)

@@ -54,18 +54,13 @@ def repo(tmp_path):
 
 @pytest.fixture
 def fake_pi(tmp_path):
-    """Put the fake pi and the fake claude on PATH. Returns the PATH to use.
-
-    Both live in the same bindir: --claude-touch tests need `claude` findable exactly the
-    way `pi` already is, and one PATH entry is simpler than two fixtures for it.
-    """
+    """Put the fake pi on PATH. Returns the PATH to use."""
     bindir = tmp_path / "bin"  # outside the repo, so it does not dirty the tree
     bindir.mkdir()
-    for name, script in (("pi", "fake_pi.py"), ("claude", "fake_claude.py")):
-        exe = bindir / name
-        exe.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{Path(__file__).parent / script}" "$@"\n',
-                       encoding="utf-8")
-        exe.chmod(0o755)
+    exe = bindir / "pi"
+    exe.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{Path(__file__).parent / "fake_pi.py"}" "$@"\n',
+                   encoding="utf-8")
+    exe.chmod(0o755)
     return f"{bindir}{os.pathsep}{os.environ['PATH']}"
 
 
@@ -86,7 +81,7 @@ def styre(repo, fake_pi, pi_config):
     `plan` maps a prompt file name (`phase1.prompt.md`, `phase1.fix1.md`, ...) to one of the
     fake agent's actions; `default` is used for the names it does not mention.
     """
-    def call(*args, plan=None, default="ok", path=None, timeout=120, claude_mode=None,
+    def call(*args, plan=None, default="ok", path=None, timeout=120,
              background=False, env_extra=None, cwd=None):
         env = dict(os.environ)
         env["STYRE_PI_CONFIG_DIR"] = str(pi_config)
@@ -95,8 +90,6 @@ def styre(repo, fake_pi, pi_config):
         env["NO_COLOR"] = "1"
         env["FAKE_PI_PLAN"] = json.dumps(plan or {})
         env["FAKE_PI_DEFAULT"] = default
-        if claude_mode is not None:
-            env["FAKE_CLAUDE_MODE"] = claude_mode
         env.update(env_extra or {})
         argv = [sys.executable, "-m", "styre", *args]
         if background:  # for tests that have to look at a run while it is still going

@@ -1,30 +1,23 @@
-"""Command line interface: the `check`, `run`, `summarize` and `watch` subcommands."""
+"""Command line interface: the `check`, `run` and `summarize` subcommands."""
 import argparse
 import sys
 from pathlib import Path
 
 from styre import __version__
-from styre.claude_review import claude_review
 from styre.config import DEFAULT_GATE_TIMEOUT, DEFAULT_RETRIES, DEFAULT_TIMEOUT, RunOptions
 from styre.design import advisories, describe, parse_phases, phase_context, validate
 from styre.gitops import not_at_root
 from styre.prompts import build_prompt
-from styre.review import describe_review
 from styre.rundir import RUNS, resolve
 from styre.runner import PreflightError, context_budget, orchestrate, preflight
 from styre.summarize import history_lines, repo_history, summarize
-from styre.timeline import Timeline
-from styre.watch import DEFAULT_PORT, serve, terminal
 
 EXAMPLES = """examples:
-  styre check design.md                 validate the design, print what it will run, and
-                                        find existing repo code its phases already name
+  styre check design.md                 validate the design and print what it will run
   styre run design.md                   run every phase, one commit each
   styre run design.md --from-phase 2    resume after a stop
   styre summarize                       what happened in the last run
   styre summarize 20260920-233014       ... in a particular one
-  styre watch                           read-only web view of this repo's runs, live
-  styre watch -t                        the same live panel, in this terminal
 
 Run it from the target repository's root: styre switches branches and commits there,
 and writes AGENTS.md and .styre/ into the directory it starts in.
@@ -47,9 +40,7 @@ def load_design(path):
 
 
 def cmd_check(args):
-    """Validate the design, print it, and — once it is structurally runnable — cross-
-    reference it against the repository. Both halves answer the same question, "is this
-    safe to start tonight", so they are one command rather than two to remember."""
+    """Validate the design and print what it will run."""
     if (root := not_at_root()) is not None:
         print(f"Run styre from the repository root, not a subdirectory:\n  cd {root}",
               file=sys.stderr)
@@ -78,8 +69,6 @@ def cmd_check(args):
         print("\n--- This repository's phases so far ---")
         print("\n".join(f"  {line}" for line in history))
 
-    print("\n--- What each phase's prose already names in this repository ---")
-    print(describe_review(phases))
     print("\nDesign looks runnable. Read the criteria and gates before you approve.")
     return 0
 
@@ -97,8 +86,6 @@ def cmd_run(args):
         from_phase=args.from_phase, run_id=args.run_id, branch=args.branch,
         allow_dirty=args.allow_dirty,
         reset_branch=args.reset_branch,
-        claude_touch=args.claude_touch,
-        claude_review=args.claude_review,
     )
     try:
         run = preflight(args.design, opts)
@@ -117,26 +104,6 @@ def cmd_summarize(args):
     return 0
 
 
-def cmd_claude_review(args):
-    run = resolve(args.run)
-    if run is None:
-        sys.exit(f"No such run: {args.run}." if args.run else
-                 "No runs found under .styre/runs/.")
-    (run.root / "logs").mkdir(exist_ok=True)
-    verdict = claude_review(run, Timeline(run.timeline), log=run.root / "logs" / "claude-review.log")
-    print(f"[styre] {verdict}")
-    return 0
-
-
-def cmd_watch(args):
-    """Serve the read-only view, or draw its live panel in the terminal. It writes nothing,
-    so there is no --dry-run and no confirmation: the only thing it can do is show you the
-    files that are already there."""
-    if args.terminal:
-        return terminal(run_id=args.run, once=args.once)
-    return serve(port=args.port)
-
-
 def build_parser():
     ap = argparse.ArgumentParser(
         prog="styre",
@@ -147,8 +114,7 @@ def build_parser():
     sub = ap.add_subparsers(dest="command", metavar="<command>")
 
     check = sub.add_parser(
-        "check", help="validate the design, print its phases and gates, and find existing "
-                      "repo code each phase's prose already names")
+        "check", help="validate the design and print its phases, gates and prompt sizes")
     check.add_argument("design", help="the design document")
     check.set_defaults(func=cmd_check)
 
@@ -174,39 +140,13 @@ def build_parser():
     run.add_argument("--allow-dirty", action="store_true", help="start with an unclean working tree")
     run.add_argument("--reset-branch", action="store_true",
                      help="discard an existing run branch and restart it at HEAD (destructive)")
-    run.add_argument("--claude-touch", action="store_true",
-                     help="on a stop, give Claude (via `claude -p`) one turn at the stuck "
-                          "phase before giving up — real, automatic spend against the "
-                          "Claude CLI; off by default")
-    run.add_argument("--claude-review", action="store_true",
-                     help="after the last phase, have Claude review the run's commits "
-                          "read-only and write <run>/claude-review.md — real, automatic "
-                          "spend (at most $5); off by default")
     run.set_defaults(func=cmd_run)
-
-    review = sub.add_parser("claude-review", help="have Claude review a finished run's commits, "
-                                                  "read-only (real spend, at most $5)")
-    review.add_argument("run", nargs="?", default=None, metavar="RUN",
-                        help="a run id or directory (default: the latest run)")
-    review.set_defaults(func=cmd_claude_review)
 
     summary = sub.add_parser("summarize", help="report what happened in a run")
     summary.add_argument("run", nargs="?", default=None, metavar="RUN",
                          help="a run id or directory (default: the latest run)")
     summary.set_defaults(func=cmd_summarize)
 
-    watch = sub.add_parser("watch", help="serve a read-only web view of this repo's runs on "
-                                         "localhost, refreshing while a phase runs")
-    watch.add_argument("--port", type=int, default=DEFAULT_PORT, metavar="PORT",
-                       help=f"port to listen on (default {DEFAULT_PORT})")
-    watch.add_argument("--terminal", "-t", action="store_true",
-                       help="draw the live panel in this terminal instead of serving a page, "
-                            "redrawn every 2 s until ctrl-c")
-    watch.add_argument("--run", default=None, metavar="ID",
-                       help="with --terminal: follow this run (default: the latest)")
-    watch.add_argument("--once", action="store_true",
-                       help="with --terminal: print the panel once and exit")
-    watch.set_defaults(func=cmd_watch)
     return ap
 
 

@@ -191,7 +191,6 @@ class Run:
     starts: list[dict] = field(default_factory=list)  # one per invocation: a resume appends
     ends: list[dict] = field(default_factory=list)
     missing: list[str] = field(default_factory=list)
-    claude_verdict: str | None = None  # the first line of claude-review.md, when there is one
 
     @property
     def first(self):
@@ -310,10 +309,6 @@ def collect(run):
         n = int(path.name[len("phase"):-len(".events.jsonl")])
         phase_of(summary.phases, n)
     summary.phases.sort(key=lambda p: p.n)
-    review = run.root / "claude-review.md"
-    if review.exists():
-        first = review.read_text(encoding="utf-8").split("\n", 1)[0]
-        summary.claude_verdict = first.removeprefix("#").strip().removeprefix("Verdict:").strip()
     for phase in summary.phases:
         if run.events(phase.n).exists():
             read_phase_events(run, phase)
@@ -442,9 +437,6 @@ def phase_table(summary):
 def where_to_look(summary):
     """The part worth reading in the morning: everything that did not go straight through."""
     out = ["## Where to look", ""]
-    if summary.claude_verdict:
-        out += [f"**Claude's review: {summary.claude_verdict}** — read `claude-review.md` "
-                "before merging.", ""]
     for p in summary.phases:
         if not p.problems:
             continue

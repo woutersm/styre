@@ -11,6 +11,11 @@ a retelling of something CLAUDE.md now explains were dropped rather than archive
 
 ## Open — in styre
 
+- [ ] **A time limit per bash call** (~10 min), enforced by styre, not left to the builder.
+      A hanging `uv run python` probe cost 2 hours on 2026-10-02 before the idle timeout fired.
+- [ ] **On a stop, `summary.md` names the last progress file**, so its findings can be copied
+      into the phase text before resuming (`skill/DIRECTOR.md` rule 3).
+
 - [ ] **`styre summarize --compare runA runB`.** Two runs side by side per phase: agent time,
       peak context, restarts, fix rounds, styre tool calls. Needed to judge a change to styre
       itself, such as the agent tools of 2026-09-30, against the run before it.
@@ -50,14 +55,20 @@ Write these down so they are not rediscovered at 3am. None is currently worth co
 
 ## Parked — ask before starting
 
-- Spend and time budgets, a placeholder scan, parallel phases, run notifications, a
-  run-level circuit breaker on repeated Claude escalations.
+- Spend and time budgets, a placeholder scan, parallel phases, run notifications, a queue
+  of designs (the director chains runs, `skill/DIRECTOR.md`).
 - **Not again without a new reason:** hidden held-out tests (built 2026-09-29, removed the
-  same day as more complexity than they were worth); a model-written run narrative
-  (`claude-review` covers it); a thinking heartbeat and live token counts in the terminal
-  (`styre watch -t` shows them).
+  same day as more complexity than they were worth); anything that calls a model or makes
+  a judgement — an automatic Claude escape hatch, an automatic review, a run narrative (all
+  the director's, `skill/DIRECTOR.md`); a web viewer or live panel (`summarize` and the log are
+  how a run is read).
 
 ## Done
+
+- **2026-10-03** — the director agreement (`skill/DIRECTOR.md`), and styre cut to what needs no
+  judgement: `touch.py` (`--claude-touch`), `claude_review.py`, `review.py` (`check`'s
+  reference cross-check), `watch.py` and `server.py` removed with their tests; `CLAUDE.md`
+  from 1,162 lines to the design record that still holds.
 
 - **2026-09-30** — the agent's `styre_gate`, `styre_progress` and `styre_finish` tools;
   `run` and `check` refuse to start outside the repository root; `summarize` reports the

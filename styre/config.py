@@ -5,6 +5,7 @@ particular is a constant because the event parsing requires `--mode json`.
 """
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -23,11 +24,6 @@ PI = ["pi", "-p", "--mode", "json"]  # json mode is not optional: we parse the e
 # of the developer's home; it is not a user-facing knob and `run` has no flag for it.
 PI_CONFIG_DIR = Path(os.environ.get("STYRE_PI_CONFIG_DIR")
                      or Path.home() / ".config" / "pi" / "styre")
-# --output-format json gives one parseable object with `result`, `is_error`, `total_cost_usd`.
-# --dangerously-skip-permissions is required for unattended tool use (verified 2026-09-21:
-# --permission-mode acceptEdits still denies Bash outright); see CLAUDE.md's "supervising
-# layer" section for why that is an accepted risk here and not elsewhere.
-CLAUDE = ["claude", "-p", "--output-format", "json", "--dangerously-skip-permissions"]
 WORK = Path(".styre")
 DECISIONS = Path("docs/decisions.md")  # committed with the code: the durable record
 AGENTS = Path("AGENTS.md")             # pi discovers this automatically, every run
@@ -83,5 +79,16 @@ class RunOptions:
     branch: str | None = None
     allow_dirty: bool = False
     reset_branch: bool = False
-    claude_touch: bool = False  # opt-in: real, automatic spend against the Claude CLI
-    claude_review: bool = False  # opt-in: one read-only Claude review of the run's commits
+
+
+def context_window(config_dir=None):
+    """The contextWindow of the default model in styre's pi config, or None when it names none."""
+    d = config_dir or PI_CONFIG_DIR
+    try:
+        settings = json.loads((d / "settings.json").read_text(encoding="utf-8"))
+        providers = json.loads((d / "models.json").read_text(encoding="utf-8"))["providers"]
+        entry = providers[settings["defaultProvider"]]
+        model = next(m for m in entry.get("models", []) if m.get("id") == settings.get("defaultModel"))
+    except (OSError, ValueError, KeyError, TypeError, StopIteration):
+        return None
+    return model.get("contextWindow")

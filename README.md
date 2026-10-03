@@ -91,7 +91,7 @@ through the working tree and a short note the previous phase leaves behind.
 
 How to cut a design so it runs well (size a phase by its work, keep each gate green on its
 own phase's work, give a new library's API in the phase that uses it) is in
-[`writing-designs.md`](https://github.com/woutersm/styre/blob/main/writing-designs.md). [`example-design.md`](https://github.com/woutersm/styre/blob/main/example-design.md) is a small
+[`skill/writing-designs.md`](https://github.com/woutersm/styre/blob/main/skill/writing-designs.md). [`example-design.md`](https://github.com/woutersm/styre/blob/main/example-design.md) is a small
 two-phase example.
 
 ## What a phase goes through
@@ -128,17 +128,25 @@ committed except `AGENTS.md` and the agent's own work.
 
 | Command | |
 | --- | --- |
-| `styre check <design>` | Validate, print each phase's gate and prompt size, warn about shapes that fail, and find existing test code the phases name |
+| `styre check <design>` | Validate, print each phase's gate and prompt size, and warn about shapes that fail |
 | `styre run <design>` | Run it. `--from-phase N` resumes, `--retries`, `--timeout` (seconds of *silence*, default 7200), `--gate-timeout`, `--branch`, `--quiet`; `--help` for all |
 | `styre summarize [run]` | The report for the latest run, or a named one |
-| `styre watch` | A read-only web view of this repo's runs on `127.0.0.1:8765`; `watch -t` draws it in the terminal |
-| `styre claude-review [run]` | Optional: Claude reviews a finished run's commits, read-only |
 
-### Optional: Claude as a last resort
+## Directing it
 
-`--claude-touch` gives Claude (the `claude` CLI) one turn at a phase the local model could not
-finish. `--claude-review` and `styre claude-review` have it review a finished run, read-only,
-at most $5. Both are off by default because they spend real money.
+styre makes no judgement calls: it runs, gates and commits. Writing the design, deciding what
+a stopped phase needs, and reviewing the result are for whoever directs the run — a person,
+or a person with an interactive assistant. [`skill/DIRECTOR.md`](https://github.com/woutersm/styre/blob/main/skill/DIRECTOR.md)
+is the five rules that work for us; [`skill/writing-designs.md`](https://github.com/woutersm/styre/blob/main/skill/writing-designs.md)
+is how to shape a design so a local model can finish it.
+
+Both live in [`skill/`](https://github.com/woutersm/styre/tree/main/skill), which is also a
+[Claude Code](https://claude.com/claude-code) skill: link it in once and `/styre` works in every
+repository.
+
+```sh
+ln -s "$(pwd)/skill" ~/.claude/skills/styre    # from a clone of this repository
+```
 
 ## Safety
 
@@ -154,8 +162,7 @@ uv run --with pytest python -m pytest -q     # the suite; the end-to-end tests d
 uvx ruff check .
 ```
 
-`tests/fake_pi.py` and `tests/fake_claude.py` stand in for pi and Claude, so the whole loop
-runs without a model. [`CLAUDE.md`](https://github.com/woutersm/styre/blob/main/CLAUDE.md) is the design record: how it works, what was
+`tests/fake_pi.py` stands in for pi, so the whole loop runs without a model. [`CLAUDE.md`](https://github.com/woutersm/styre/blob/main/CLAUDE.md) is the design record: how it works, what was
 measured, and which decisions are settled. [`TODO.md`](https://github.com/woutersm/styre/blob/main/TODO.md) is what is open.
 
 ## License

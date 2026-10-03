@@ -14,7 +14,6 @@ from pathlib import Path
 
 from styre import __version__
 from styre.agents import write_agents_file
-from styre.claude_review import claude_review
 from styre.config import (
     AGENTS,
     DECISIONS,
@@ -26,6 +25,7 @@ from styre.config import (
     RESUME_FRACTION,
     WORK,
     RunOptions,
+    context_window,
 )
 from styre.design import parse_phases, phase_context
 from styre.gitops import (
@@ -54,7 +54,6 @@ from styre.prompts import (
     resumed_fix_prompt,
     template_hash,
 )
-from styre.review import describe_review
 from styre.rundir import (
     RunDir,
     archive_progress,
@@ -68,11 +67,9 @@ from styre.rundir import (
     read_progress,
     start_phase_tools,
 )
-from styre.server import provider
 from styre.state import read_state, state_problem
 from styre.summarize import final_usage, read_jsonl, summarize
 from styre.timeline import Timeline
-from styre.touch import touch
 
 
 class PreflightError(Exception):
@@ -95,22 +92,8 @@ class Ctx:
     phases: list = field(default_factory=list, init=False)
 
     def __post_init__(self):
-        self.reload()
-
-    def reload(self):
-        """(Re-)read the design off disk.
-
-        Called again after a Claude touch patches it, so every later phase gets the fixed
-        text. A patch that adds or loses phases is ignored: the shape of a run is fixed when
-        it starts, and renumbering it halfway through is not a thing to discover at 3am.
-        """
-        text = Path(self.design_path).read_text(encoding="utf-8")
-        phases = parse_phases(text)
-        if self.phases and len(phases) != len(self.phases):
-            print("[warn] the patched design has a different number of phases; keeping the "
-                  "one the run started with.", flush=True)
-            return
-        self.text, self.phases = text, phases
+        self.text = Path(self.design_path).read_text(encoding="utf-8")
+        self.phases = parse_phases(self.text)
 
     def phase(self, n):
         return self.phases[n - 1]
@@ -244,7 +227,7 @@ def pi_command(run, n, step, prompts, session=None):
 def context_budget():
     """(relay_at, resume_below) in tokens, from the contextWindow of the model styre's pi config
     uses; (None, None) when it names none, which switches both off."""
-    window = (provider() or {}).get("context_window")
+    window = context_window()
     if not isinstance(window, int) or window <= 0:
         return None, None
     return int(window * RELAY_FRACTION), int(window * RESUME_FRACTION)
@@ -422,23 +405,6 @@ def pi_version():
     return out.strip().splitlines()[0] if rc == 0 and out.strip() else None
 
 
-def _escalate(ctx, n, why):
-    """After run_phase() stops, give Claude one turn at the phase before giving up on it.
-
-    One turn, ever: a gate that resists both the local model's own retries and Claude is not
-    a capability gap to push through further, it needs a person. Whether the phase has had
-    its turn is read off the timeline rather than a bookkeeping file of its own — the touch
-    events are already there, and a resumed run appends to the same timeline it reads.
-    """
-    if any(e.get("event") == "touch_start" and e.get("phase") == n
-           for e in read_jsonl(ctx.run.timeline)):
-        print(f"    phase {n} has already had its Claude touch — stopping for a human, not "
-              "trying again automatically.", flush=True)
-        return why
-    print(f"    phase {n} stopped ({why}); handing it to Claude...", flush=True)
-    return touch(ctx, n, why)
-
-
 def orchestrate(design_path, opts, run):
     """Run every phase from --from-phase on. Returns the process exit code."""
     tl = Timeline(run.timeline)
@@ -449,34 +415,14 @@ def orchestrate(design_path, opts, run):
              pi_config=str(PI_CONFIG_DIR),
              phases=len(ctx.phases), from_phase=opts.from_phase, retries=opts.retries)
 
-    # The initial review: what already exists in the repo that each phase's prose names,
-    # computed once before any phase runs and written into the run directory rather than
-    # requiring a separate call to remember to make. Deterministic, no model call, cheap —
-    # unlike a Claude touch, this runs every time, on by default.
-    run.review.write_text(f"# Review before phase {opts.from_phase}\n\n"
-                          f"{describe_review(ctx.phases)}\n", encoding="utf-8")
-    print(f"[styre] review written to {run.review}", flush=True)
-
     committed, stopped = 0, None
     for n in range(opts.from_phase, len(ctx.phases) + 1):
         why = run_phase(ctx, n)
-        if why is not None and opts.claude_touch:
-            why = _escalate(ctx, n, why)
         if why is not None:
             stopped = f"Stopped at phase {n}: {why}. Work is left uncommitted."
             break
         committed += 1
-        if n < len(ctx.phases):
-            # Re-checked against the repo state phase n just produced: a phase can make a
-            # later one's own references newly resolvable, or newly conflicting, in ways
-            # the initial review — computed before anything was built — could not see.
-            with open(run.review, "a", encoding="utf-8") as f:
-                f.write(f"\n# Review after phase {n}\n\n{describe_review(ctx.phases[n:])}\n")
 
-    if opts.claude_review and committed:
-        # After the last phase and before run_end, so the summary below carries the verdict.
-        # It reviews what this run committed, whether or not a later phase stopped.
-        claude_review(run, tl, log=run.root / "logs" / "claude-review.log")
     tl.event("run_end", exit_code=1 if stopped else 0, committed=committed, stopped=stopped)
     # The run's own report is `summarize`'s, read back off the timeline it just wrote: the
     # numbers are measured rather than accumulated as we went, and there is one report

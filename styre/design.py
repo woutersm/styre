@@ -35,7 +35,7 @@ CONTRACT_DOCS = frozenset({"decisions.md", "AGENTS.md", "notes-next.md"})
 # Naming a document is fine — a design cross-references other plans all the time. What is
 # not fine is *telling the agent to go and read one*, so only a reading verb near the path
 # counts. Without this the check reported 7 documents on a real design where 1 mattered,
-# which is the failure `review.py` already made once: signal buried in true-but-useless.
+# which buries the signal in true-but-useless.
 READ_RE = re.compile(r"\b(read|consult|refer to|study|look at|open)\b", re.I)
 # "Do not open anything in `docs/` — not `agent-design.md`" is a design doing the right
 # thing, and warning about it would teach the reader to ignore the warning. A negation just
@@ -66,9 +66,9 @@ TICKED_RE = re.compile(r"`([@\w][\w./@-]*)`")
 # Windows for the same reason, so this is not a rare shape.
 # Only the directive forms. A bare "skip" is ordinary English, and on a real design the
 # loose version flagged "`rrule`'s skipping behaviour" — the subject under test, not a test
-# skip — which is the signal-in-noise failure `review.py` made once with MAX_HITS and
-# `doc_references` made with its seven documents. A marker name, "skip" governing a test
-# noun, or "skip on/when/unless" governing a condition: nothing else counts.
+# skip — the signal-in-noise failure `doc_references` made with its seven documents.
+# A marker name, "skip" governing a test noun, or "skip on/when/unless" governing a
+# condition: nothing else counts.
 SKIP_RE = re.compile(r"\b(?:skipif|xfail|xit)\b"
                      r"|\b(?:pytest\.mark\.skip|unittest\.skip)"
                      r"|\bskip(?:ped)?\s+(?:this|these|those|that|the|a|any|it|them|"

@@ -5,7 +5,7 @@ goes in it. Every rule below cost a night, and each one names the run it came fr
 
 ⚠️ **This document is not for the agent.** Do not name it in a design, and never write
 "read `writing-designs.md`" into a preamble — `advisories()` flags a design that points its
-agent at a document, for the reason in CLAUDE.md under "Prompt size". This is for whoever
+agent at a document, because a document the agent is told to read lands whole in its context. This is for whoever
 writes the design, before the run.
 
 ## The workflow
@@ -39,8 +39,8 @@ A phase's prompt is not what fills its context. Measured on app run `20260923-21
 
 The prompts are the same size. The phases are not. Phase 2's 25 `read` results alone were
 ~43k tokens, a third of its peak, and the host refused the prefill at `kv_len=129344`
-(`predicted peak would exceed prefill safety cap 37.8GB`) — the empty-response failure in
-CLAUDE.md under "The host runs out of memory long before it runs out of context".
+(`predicted peak would exceed prefill safety cap 37.8GB`), which styre reports as an empty
+response.
 
 So size a phase by the work, and estimate the work before the run:
 
@@ -49,7 +49,7 @@ So size a phase by the work, and estimate the work before the run:
   available before the night was spent.
 - **Count the files it must open.** Each one is 5-7k tokens of `read` result, and a file
   re-read after an edit costs it twice.
-- Against CLAUDE.md's measured rate — roughly a minute per 1,000 tokens of peak context,
+- At the rate measured in September 2026 — roughly a minute per 1,000 tokens of peak context,
   decode halving from 23 to 12 tok/s as context grows — a phase aimed at 50k is an hour and
   a phase aimed at 130k does not finish at all.
 
@@ -179,7 +179,7 @@ attempt with **six self-fix rounds** inside it: the agent found and fixed six th
 criteria stated less plainly than the gate enforced. That gap is invisible in the commit and
 is the clearest signal that a criterion needs rewriting before the next run.
 
-Also, from CLAUDE.md's advisories: keep criteria to **8 or fewer**, make each one an
+Also, from `styre check`'s advisories: keep criteria to **8 or fewer**, make each one an
 observable fact, and never ask for a skipped or xfailed test — the guard rejects the marker
 and the phase fails for doing what the design said.
 
@@ -206,7 +206,7 @@ and of the last one that worked: the difference is the size of the split you nee
 
 ## Before the run
 
-1. `styre check <design>` — clean, and read the reference review rather than skimming it.
+1. `styre check <design>` — clean, and every warning read.
 2. For each phase: `grep -rn` its names, and count the files it must open.
 3. For each phase: would its gate be green with only that phase's work applied?
 4. Any phase naming more than a handful of modules is a ripple — is it late enough?
