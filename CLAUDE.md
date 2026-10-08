@@ -37,6 +37,7 @@ read.
 | `styre/timeline.py` | The append-and-flush writer behind `<run>/timeline.jsonl`. |
 | `styre/summarize.py` | Reading a run back off disk: `summarize`, and the report `run` prints as it ends. |
 | `styre/pi_extensions/` | Passed to every pi process with `--extension`: `cap-output.js`, `no-compaction.js`, `strip-thinking.js`, and `styre-tools.js` (the agent's `styre_gate`, `styre_progress`, `styre_finish`). |
+| `skill/SKILL.md` | The Claude Code skill (`/styre`): the director's loop. |
 | `skill/DIRECTOR.md` | How a person and an interactive assistant work with styre: five rules. |
 | `skill/writing-designs.md` | How to shape a design before a run. For the author — never named in a design (`advisories()` flags it). |
 | `TODO.md` | What is left and what is parked. |

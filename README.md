@@ -1,21 +1,66 @@
 # styre
 
-Run a phased design through the [pi coding agent](https://www.npmjs.com/package/@earendil-works/pi-coding-agent)
-overnight, unattended, and wake up to one git commit per phase.
+Hand a phased design to a local coding model, leave it running, and come back to one git
+commit per phase, each one passed by your own tests.
 
 You write a design document split into phases. Each phase says what to build, what must be
 true when it is done, and which commands prove it: the **gate**. styre gives each phase to a
-fresh pi process, then runs the gate itself and checks the staged diff. The agent saying it is
-done counts for nothing; a phase is committed only when the gate is green and no test was
-skipped or deleted. When a gate fails, the agent gets the failure back and another try, a
-limited number of times.
+fresh [pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) process, then runs
+the gate itself and inspects the staged diff. The agent saying it is done counts for nothing:
+a phase is committed only when the gate is green and no test was skipped or deleted. A red
+gate goes back to the agent as a fix round, a limited number of times, and then the run stops
+with the work uncommitted.
 
-It was built for one person's nights with a local 27B model, and it shows: everything in it
-exists because a run failed without it. The reasoning, with measurements, is in
-[`CLAUDE.md`](https://github.com/woutersm/styre/blob/main/CLAUDE.md).
+> **Status: alpha.** Used on macOS with local 27B models served over an OpenAI-compatible
+> API. Checked against pi 1.0.4: the event stream and the agent tools. Expect rough edges
+> anywhere else.
 
-> **Status: alpha.** Tested on macOS with pi 0.87 and local models served over an
-> OpenAI-compatible API. Expect rough edges anywhere else.
+## Built for agents
+
+Almost nothing in styre is read by a person while it runs. It has three readers, and each
+one got an interface designed for it.
+
+**The builder**, a local model inside pi, gets:
+
+- **A tool API with the guardrails in it.** `styre_gate` runs exactly the commands styre will
+  run afterwards and returns pass/fail per command with the tail of each failure, as data.
+  `styre_progress` takes four fields (`done`, `now`, `next`, `learned`) instead of free
+  prose. `styre_finish` **refuses `DONE` unless the last `styre_gate` passed**, and counts
+  the agent's self-fix rounds from the recorded gate runs instead of asking for them.
+- **Docs written for a machine.** A managed block in the target repo's `AGENTS.md`, which pi
+  loads into every request: what is checked after it stops and why reporting success early
+  gains nothing, which files to write and who reads each one, and how to read narrowly. Only
+  standing rules go there; each phase's prompt carries only that phase.
+- **A context budget it cannot overspend.** pi extensions cap what a `read` or a `bash` call
+  puts into context, drop earlier thinking from every request, and cancel compaction. Past
+  75% of the model's window, styre stops the agent between two turns, has it write its
+  progress file, and continues in a fresh process from that file.
+
+**The director**, an interactive assistant such as Claude Code, works the loop around styre:
+writing the design with the owner, starting and resuming runs, reading a stop, reviewing the
+result. [`skill/`](https://github.com/woutersm/styre/tree/main/skill) is a Claude Code skill
+for that job, with rules for what it may do without asking.
+
+**The gate** reads no agent's account at all. styre runs the gate commands itself, rejects a
+diff that adds skip/xfail markers or loses test functions, and builds the run's report,
+`summary.md`, from its own measured timeline rather than from anything the agent wrote.
+
+## What broke, and what styre does about it
+
+Every mechanism above exists because a real run failed without it. Some of the measurements:
+
+| What happened | What styre does now |
+| --- | --- |
+| My own interactive pi setup (web tools, a personal `AGENTS.md`) was **47% of every request**. | pi runs under styre's own config directory, and `run` refuses to start without it. Fixed overhead went from 8,331 to 1,639 tokens. |
+| Tool results were **67% of a 60k-token phase**, with single reads of 18,000 characters. | `cap-output.js`: a `read` returns at most 300 lines, a `bash` call its first 60 and last 90, with a note on how to get the rest. |
+| Compaction re-prefilled 48k tokens (**8.5 minutes**); on a server without a thinking budget it failed 16 times in one phase. | Compaction is cancelled. A full step is restarted from its progress file instead. |
+| A restarted agent had never written its progress file, and spent **80 minutes** re-reading the tree. | Before a restart, the stopped step gets one extra turn in its own cached session, whose only job is to write the file. |
+| The provider dropped a request and returned an empty stream. styre reported "no state file written", and **two days** went into reading the agent's contract. | An all-zero usage block stops the phase with "the model returned an empty response". |
+| A design told the agent to skip a test on non-macOS; it did, and the test guard rejected the phase. | `styre check` flags a design that asks for a skip marker before the run starts. |
+| A phase named a new library with no example, so every step spent ~12 `python -c` calls learning its API; **80% of the phase's output was thinking**. | `styre check` flags a new dependency with no code snippet; [`skill/writing-designs.md`](https://github.com/woutersm/styre/blob/main/skill/writing-designs.md) says what a phase must hand over. |
+
+[`CLAUDE.md`](https://github.com/woutersm/styre/blob/main/CLAUDE.md) is the full design record:
+how it works, what was measured, and which decisions are settled.
 
 ## Requirements
 
@@ -159,14 +204,13 @@ committed except `AGENTS.md` and the agent's own work.
 ## Directing it
 
 styre makes no judgement calls: it runs, gates and commits. Writing the design, deciding what
-a stopped phase needs, and reviewing the result are for whoever directs the run — a person,
-or a person with an interactive assistant. [`skill/DIRECTOR.md`](https://github.com/woutersm/styre/blob/main/skill/DIRECTOR.md)
-is the five rules that work for us; [`skill/writing-designs.md`](https://github.com/woutersm/styre/blob/main/skill/writing-designs.md)
+a stopped phase needs, and reviewing the result are for whoever directs the run: a person, or
+a person with an interactive assistant. [`skill/DIRECTOR.md`](https://github.com/woutersm/styre/blob/main/skill/DIRECTOR.md)
+is five rules for that; [`skill/writing-designs.md`](https://github.com/woutersm/styre/blob/main/skill/writing-designs.md)
 is how to shape a design so a local model can finish it.
 
-Both live in [`skill/`](https://github.com/woutersm/styre/tree/main/skill), which is also a
-[Claude Code](https://claude.com/claude-code) skill: link it in once and `/styre` works in every
-repository.
+To use [`skill/`](https://github.com/woutersm/styre/tree/main/skill) as a [Claude Code](https://claude.com/claude-code)
+skill, link it in once and `/styre` works in every repository:
 
 ```sh
 ln -s "$(pwd)/skill" ~/.claude/skills/styre    # from a clone of this repository
