@@ -148,9 +148,11 @@ def preflight(design_path, opts):
             "one, so a phase never carries packages, tools or writing-style instructions it "
             "has no use for. Create it:\n"
             f"  mkdir -p {PI_CONFIG_DIR}\n"
-            f"  cp ~/.config/pi/agent/models.json ~/.config/pi/agent/auth.json {PI_CONFIG_DIR}/\n"
-            f"  echo '{{}}' > {PI_CONFIG_DIR}/settings.json\n"
-            "Leave packages out of that settings.json, and put no AGENTS.md beside it.")
+            f"  cp ~/.pi/agent/models.json ~/.pi/agent/auth.json {PI_CONFIG_DIR}/\n"
+            f"  echo '{{\"defaultProvider\": \"…\", \"defaultModel\": \"…\"}}' "
+            f"> {PI_CONFIG_DIR}/settings.json\n"
+            "Leave packages out of that settings.json, and put no AGENTS.md beside it. "
+            "The README has a complete example for a local model.")
     if not in_repo():
         raise PreflightError("Run this from inside a git repository.")
     if (root := not_at_root()) is not None:

@@ -38,15 +38,39 @@ styre runs pi with `PI_CODING_AGENT_DIR=~/.config/pi/styre` and refuses to start
 An unattended run should not inherit your interactive setup: on one machine the operator's
 extensions and personal `AGENTS.md` were 47% of every request.
 
-```sh
-mkdir -p ~/.config/pi/styre
-cp ~/.config/pi/agent/models.json ~/.config/pi/agent/auth.json ~/.config/pi/styre/
-echo '{}' > ~/.config/pi/styre/settings.json
+It needs two files. `models.json` names your model host and model; this one is a local
+OpenAI-compatible server:
+
+```json
+{
+  "providers": {
+    "local": {
+      "baseUrl": "http://localhost:8000/v1",
+      "api": "openai-completions",
+      "apiKey": "none",
+      "models": [
+        { "id": "my-model", "reasoning": true, "input": ["text"], "contextWindow": 120000 }
+      ]
+    }
+  }
+}
 ```
 
-Keep it lean: no `packages`, and no `AGENTS.md` beside it. Pin the model in its
-`settings.json` (`defaultProvider`, `defaultModel`), and set the model's `contextWindow` in
-`models.json`: styre restarts a phase in a fresh process at 75% of it.
+`settings.json` pins that model, and installs no packages:
+
+```json
+{ "defaultProvider": "local", "defaultModel": "my-model", "packages": [] }
+```
+
+```sh
+mkdir -p ~/.config/pi/styre      # then write the two files above into it
+```
+
+A hosted provider works the same way: copy `models.json` and `auth.json` from your own pi
+config (`~/.pi/agent/` by default) and pin the model in `settings.json`. Keep the directory
+lean: no `AGENTS.md`, no extensions. `contextWindow` matters: styre restarts a phase in a
+fresh process at 75% of it, and without it that restart is off. `styre run` refuses to
+start without `models.json`.
 
 ## Quick start
 
