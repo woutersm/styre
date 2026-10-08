@@ -61,21 +61,11 @@ def test_a_failed_tool_call_is_counted_and_reported(tmp_path):
     assert "1 failed bash call(s)" in render(summary)
 
 
-def test_the_captured_fixtures_have_zero_usage_and_that_is_read_as_zero(tmp_path):
-    # These were captured before the provider was fixed to report usage. A parser must read
-    # them as zeros, not conclude that counts are always zero.
-    phase = collect(make_run(tmp_path)).phases[0]
-    assert phase.usage.peak == 0 and phase.usage.output == 0
-
-
-def test_real_token_counts_are_read_off_a_post_fix_capture(tmp_path):
-    # pi_usage.jsonl was captured after the mlxserve provider was set to report usage while
-    # streaming, so unlike the older fixtures it carries real numbers.
-    usage = collect(make_run(tmp_path, fixture="pi_usage.jsonl")).phases[0].usage
-    assert (usage.peak, usage.output, usage.cache_read) == (7727, 23, 6144)
-    # mlxserve reported `reasoning: 0` on a message that carries a thinking block. That zero is
-    # not believed: the output is split by characters across the message's blocks instead.
-    assert usage.reasoning == 22
+def test_real_token_counts_are_read_off_a_capture(tmp_path):
+    # pi_toolcall.jsonl is two assistant messages: the peak is the larger totalTokens, output,
+    # reasoning and cache hits are summed. A reported `reasoning` is believed when it is backed.
+    usage = collect(make_run(tmp_path)).phases[0].usage
+    assert (usage.peak, usage.output, usage.reasoning, usage.cache_read) == (1907, 63, 31, 3584)
 
 
 def test_thinking_is_the_providers_count_unless_it_denies_visible_thinking():
@@ -187,7 +177,7 @@ def test_state_files_fill_in_for_a_phase_the_timeline_never_finished(tmp_path):
 def test_a_run_without_a_timeline_still_summarises_what_it_has(tmp_path):
     summary = collect(make_run(tmp_path))
     assert "Incomplete" in render(summary) and "timeline.jsonl" in render(summary)
-    assert summary.phases[0].usage.peak == 0       # the events file is still readable
+    assert summary.phases[0].usage.peak == 1907    # the events file is still readable
 
 
 def test_summarize_writes_summary_md_into_the_run(tmp_path):
@@ -204,8 +194,8 @@ def test_the_commit_sha_is_in_the_table(tmp_path):
 
 
 def test_cache_hits_are_summed_and_shown(tmp_path):
-    summary = collect(make_run(tmp_path, fixture="pi_usage.jsonl"))
-    assert summary.phases[0].usage.cache_read == 6144
+    summary = collect(make_run(tmp_path))
+    assert summary.phases[0].usage.cache_read == 3584
     assert "Cached" in render(summary)
 
 
