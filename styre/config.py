@@ -10,10 +10,14 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-PI = ["pi", "-p", "--mode", "json"]  # json mode is not optional: we parse the event stream
+# json mode is not optional: we parse the event stream. pi 1.0 also discovers global skills
+# (~/.agents/skills) and starts its built-in MCP support whatever the config directory says;
+# both put an interactive setup's material into every request, which PI_CONFIG_DIR exists to
+# keep out.
+PI = ["pi", "-p", "--mode", "json", "--no-skills", "--no-mcp"]
 
 # pi's config directory for a styre run, exported to every pi process. An unattended run
-# must not inherit an interactive setup: measured on 2026-09-23, the operator's own config
+# must not inherit an interactive setup: measured on 2026-09-23, an interactive config
 # put 11,551 chars of `pi-web-access` tool schemas and a 10,888-char writing-style
 # AGENTS.md into *every request of every turn* — 47% of a phase's starting context, for an
 # agent with no network tests and no human reading its prose. It also pins down a hazard

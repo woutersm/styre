@@ -463,6 +463,13 @@ def test_every_pi_step_loads_styres_extensions(styre, repo):
         assert loaded == names
 
 
+def test_every_pi_step_leaves_global_skills_and_mcp_out(styre, repo):
+    """pi 1.0 loads ~/.agents/skills and its MCP support even under styre's own config dir."""
+    styre("run", "design.md", "--quiet")
+    for argv in argvs(repo):
+        assert "--no-skills" in argv and "--no-mcp" in argv
+
+
 def test_a_fresh_fix_round_gets_the_phase_prompt_and_the_progress_file(styre, repo):
     r = styre("run", "design.md", "--quiet",
               plan={"phase1.prompt.md": "bad_gate", "phase1.fix1.md": "ok"})

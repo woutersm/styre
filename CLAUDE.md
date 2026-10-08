@@ -79,7 +79,7 @@ to cut one so its gate is green on its own work.
    there, only phase-specific material goes in the prompt.
 1. The prompt: the design's preamble, an index of phase titles, this phase's section in full,
    the previous phase's `notes-next.md`, its criteria and gate. Not `docs/decisions.md`.
-2. A fresh pi process (`pi -p --mode json`, the constant `PI`, plus session, name, extension
+2. A fresh pi process (`pi -p --mode json --no-skills --no-mcp`, the constant `PI`, plus session, name, extension
    and prompt-file flags), under `--timeout`: seconds of **silence**, not of runtime. Raw events
    go to `logs/phaseN.events.jsonl`, a readable rendering to `logs/phaseN.log`.
 3. An all-zero usage block on pi's last message stops the phase with "the model returned an
@@ -122,6 +122,7 @@ Every pi process gets `PI_CODING_AGENT_DIR=~/.config/pi/styre` (`config.PI_CONFI
 preflight refuses to start without its `models.json`. An unattended run must not inherit an
 interactive setup: once, 47% of a phase's context was another setup's tool schemas and rules.
 Keep it lean — `models.json`, `auth.json`, a `settings.json` with no packages, no `AGENTS.md`.
+pi 1.0 finds global skills and starts MCP regardless, so `PI` passes `--no-skills --no-mcp`.
 Gate commands and git keep the inherited environment.
 
 ## State on disk (in the target repo)
