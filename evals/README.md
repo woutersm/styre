@@ -31,7 +31,12 @@ events and per-trial facts land in `evals/runs/<stamp>/`, which is not committed
 is printed and saved there. Results worth keeping go in [`results/`](results/).
 
 A trial passes when every check of its scenario holds. Local models vary run to run, so a
-scenario is a pass rate over trials, not a verdict.
+scenario is a pass rate over trials, not a verdict. `--rescore evals/runs/<stamp>` re-applies
+corrected checks to a finished run without calling the model.
+
+[`results/interface.md`](results/interface.md): a local 27B, 5 trials each, 30 of 30 after one
+check was corrected. Every scenario is at its ceiling, so they guard styre's interface against
+regressions rather than rank models.
 
 ## `advisories.py`: do `styre check`'s warnings predict trouble?
 

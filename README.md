@@ -64,7 +64,9 @@ how it works, what was measured, and which decisions are settled.
 
 [`evals/`](https://github.com/woutersm/styre/tree/main/evals) checks the interfaces against
 the model and the history: whether the builder keeps the contract its tools and docs set
-out, and whether `styre check`'s warnings predict the phases that go badly.
+out, and whether `styre check`'s warnings predict the phases that go badly. On a local 27B
+model the builder kept the contract in 30 of 30 trials, including finishing BLOCKED instead
+of faking a gate that could not pass.
 
 ## Requirements
 
