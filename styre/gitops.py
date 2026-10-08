@@ -33,15 +33,6 @@ def stage_all():
     git("add", "-A")
 
 
-def stage(path):
-    git("add", "--", str(path))
-
-
-def unstage_all():
-    """Empty the index, leaving the working tree alone."""
-    git("reset", "-q")
-
-
 def staged_diff():
     return git("diff", "--cached", "-U0")[1]
 

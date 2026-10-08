@@ -9,8 +9,8 @@
 //
 // styre manages context itself instead: it restarts a phase that grows past its threshold in
 // a fresh process that carries on from the agent's progress file (see styre/runner.py). A
-// cancelled compaction is visible in the event stream, where `styre watch` and `summarize`
-// count it.
+// cancelled compaction is visible in the event stream, where `summarize`
+// counts it.
 
 export default function noCompaction(pi) {
   pi.on("session_before_compact", () => ({ cancel: true }));
