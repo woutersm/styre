@@ -118,7 +118,7 @@ where you actually got to.
 def handoff_prompt(context, relay_at):
     """The one turn a stopped step gets, in its own session, before a fresh process takes over:
     its conversation is still in the server's cache, so writing down what it knows costs a
-    minute, and the next process does not start blind (app phase 3, 2026-09-28: the builder
+    minute, and the next process does not start blind (a real phase, 2026-09-28: the builder
     never wrote its progress file, and the first fresh start re-read the same eight files)."""
     return f"""Stop the work here. Your context has reached {context:,} tokens, past the {relay_at:,}
 this phase is given, and a fresh process will carry on from your progress file — it knows only

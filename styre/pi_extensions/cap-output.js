@@ -1,6 +1,6 @@
 // Cap what a `read` or a `bash` call puts into the model's context, at the moment it does.
 //
-// Tool results are most of a phase's context: 67% of a 60k app phase at step 19, with single
+// Tool results are most of a phase's context: 67% of a 60k phase at step 19, with single
 // reads of 18,000 characters (2026-09-28). pi's own limits are 2,000 lines or 50 KB per call —
 // ~14k tokens in one step — and every token that enters costs prefill time on a local model host
 // (~9 ms each on an M4 Pro) and stays for the rest of the phase.

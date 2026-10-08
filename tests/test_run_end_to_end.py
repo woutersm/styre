@@ -309,7 +309,7 @@ def test_summarize_without_any_run_says_so(styre, repo, commits):
 
 
 def test_a_missing_pi_config_stops_the_run_with_instructions(styre, repo, commits, tmp_path):
-    """An unattended run uses styre's own pi config, never the operator's interactive one:
+    """An unattended run uses styre's own pi config, never the user's interactive one:
     measured 2026-09-23, the interactive setup put 22,439 chars of web-search tool schemas
     and writing-style rules into every request — 47% of a phase's starting context."""
     r = styre("run", "design.md", "--quiet",
@@ -360,7 +360,7 @@ def test_each_phase_hands_its_number_and_gate_to_the_agents_tools(styre, repo, c
 
 def test_a_run_from_a_subdirectory_is_refused(styre, repo, commits):
     """From a subdirectory, styre would write its AGENTS.md block and .styre/ there, and the
-    agent would work relative to it: app's calendar run did exactly that from docs/."""
+    agent would work relative to it: a real run did exactly that from docs/."""
     sub = repo / "docs"
     sub.mkdir()
     (sub / "design.md").write_text((repo / "design.md").read_text(encoding="utf-8"),
@@ -517,7 +517,7 @@ def test_a_step_past_the_threshold_continues_in_a_fresh_process(styre, repo, pi_
 
 
 def test_a_relay_first_resumes_the_stopped_step_to_write_its_progress(styre, repo, pi_config):
-    """app phase 3, 2026-09-28: the builder was stopped at 72k without ever writing its progress
+    """A real phase, 2026-09-28: the builder was stopped at 72k without ever writing its progress
     file, so the first fresh start began blind and spent 80 minutes re-reading the tree."""
     with_window(pi_config)
     r = styre("run", "design.md", "--quiet", plan={"phase1.prompt.md": "grow"}, timeout=60)

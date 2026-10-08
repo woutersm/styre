@@ -17,8 +17,8 @@ PI = ["pi", "-p", "--mode", "json"]  # json mode is not optional: we parse the e
 # put 11,551 chars of `pi-web-access` tool schemas and a 10,888-char writing-style
 # AGENTS.md into *every request of every turn* — 47% of a phase's starting context, for an
 # agent with no network tests and no human reading its prose. It also pins down a hazard
-# this file already warned about: PI_CODING_AGENT_DIR is exported from ~/.zshrc, so a run
-# started by cron or launchd fell back to the dead pre-16-September ~/.pi/agent tree.
+# this file already warned about: with PI_CODING_AGENT_DIR exported from a shell profile, a
+# run started by cron or launchd fell back to a stale ~/.pi/agent tree.
 # Keep it lean: models.json, auth.json, a settings.json with no packages, and no AGENTS.md.
 # $STYRE_PI_CONFIG_DIR exists so the test suite can point at a temporary directory instead
 # of the developer's home; it is not a user-facing knob and `run` has no flag for it.
@@ -42,10 +42,11 @@ PI_EXTENSIONS = tuple(sorted((Path(__file__).parent / "pi_extensions").glob("*.j
 # the numbers move with the config instead of being one host's facts.
 # - A step whose context passes RELAY_FRACTION is stopped at the end of its current turn and
 #   the phase continues in a fresh process from the agent's progress file. 0.75 of 120k is
-#   90k. It was 0.6, set from mlxserve's decay curve; on modelhost (2026-09-29, four phases, 900
-#   messages) writing flattens at 26-27 tok/s from 40k to 80k and prefill per message stays
-#   ~8 s, so staying costs little while every fresh start re-reads its way in. What is left
-#   of the reason is the host's memory wall, which modelhost cleared at 96k in model-bench.
+#   90k. It was 0.6, set from one MLX server's decay curve; on the server that replaced it
+#   (2026-09-29, four phases, 900 messages) writing flattens at 26-27 tok/s from 40k to
+#   80k and prefill per message stays ~8 s, so staying costs little while every fresh
+#   start re-reads its way in. What is left of the reason is the host's memory wall, which
+#   that server cleared at 96k in a benchmark.
 # - A fix round resumes the failed step's own session when that step ended below
 #   RESUME_FRACTION: its conversation is still in the server's prompt cache, so a small fix
 #   costs a minute instead of a fresh process re-reading the phase. Above it, a fresh start.
@@ -54,7 +55,7 @@ RESUME_FRACTION = 0.5
 # A phase keeps relaying while each fresh start changes something — the tree or the progress
 # file — and stops at the first that changes neither. MAX_RELAYS is only the backstop. It was
 # the whole rule at 3, and two phases that were progressing fine finished on exactly their
-# third fresh start (app sources 6 and 7, 2026-09-29).
+# third fresh start (phases 6 and 7 of a real run, 2026-09-29).
 MAX_RELAYS = 6
 
 DEFAULT_RETRIES = 2

@@ -1,16 +1,18 @@
 # Writing a design for styre
 
 The format is in `CLAUDE.md` under "Design file format"; this is about the *shape* of what
-goes in it. Every rule below cost a night, and each one names the run it came from.
+goes in it. Every rule below cost a failed run, and each one names the run it came from. The runs are
+from a real personal project — a Python backend with a web UI — built with styre and a
+local 27B model over 44 phases.
 
 ⚠️ **This document is not for the agent.** Do not name it in a design, and never write
 "read `writing-designs.md`" into a preamble — `advisories()` flags a design that points its
-agent at a document, because a document the agent is told to read lands whole in its context. This is for whoever
-writes the design, before the run.
+agent at a document, because a document the agent is told to read lands whole in its
+context. This is for whoever writes the design, before the run.
 
 ## The workflow
 
-Seven steps, in this order. Each one exists because skipping it cost a night.
+Seven steps, in this order. Each one exists because skipping it cost a run.
 
 1. **Grill the intent.** What it does, what it must not do, what the tests fake. Decisions
    go into the preamble, and only what *every* phase needs goes there — it ships to each one.
@@ -22,14 +24,14 @@ Seven steps, in this order. Each one exists because skipping it cost a night.
    by trial inside the phase, at context and thinking cost, again in every fresh start.
 5. **Estimate each phase's work**: `grep -rn` the names it changes, count the files it must
    open. A phase gated by both a backend and a UI peaks at 74-116k here; nothing else goes in it.
-6. **Prove it before the night**: run the DDL and every new gate command once by hand, then
+6. **Prove it before the run**: run the DDL and every new gate command once by hand, then
    `styre check` until nothing in "Worth a look" is a surprise.
 7. **After the run**, read `styre summarize` against the table at the end of this file, change
    the *design*, commit that change on its own, and resume with `--from-phase`.
 
 ## The unit of a phase is work, not prose
 
-A phase's prompt is not what fills its context. Measured on app run `20260923-211043`
+A phase's prompt is not what fills its context. Measured on run `20260923-211043`
 (styre 0.12.0):
 
 | | prompt | reads | edits | peak context | outcome |
@@ -46,7 +48,7 @@ So size a phase by the work, and estimate the work before the run:
 
 - **Count the sites.** `grep -rn` every identifier the phase has to change. Phase 2's design
   named ten modules; the grep found **131 matching lines across 16 files**. That number was
-  available before the night was spent.
+  available before the run was spent.
 - **Count the files it must open.** Each one is 5-7k tokens of `read` result, and a file
   re-read after an edit costs it twice.
 - At the rate measured in September 2026 — roughly a minute per 1,000 tokens of peak context,
@@ -84,7 +86,7 @@ This is the boundary test, and it decides where a phase ends more reliably than 
 **if cutting a phase leaves the suite red, the cut is in the wrong place.** Nothing is
 committed on a red gate, so a phase that cannot pass on its own is not a phase.
 
-That rules out the obvious cut as often as not. Splitting app's phase 2 into "the
+That rules out the obvious cut as often as not. Splitting phase 2 of that run into "the
 migration" and "the ripple" looked right and was not: the tick's send-once filter is
 `reminded_at IS NULL` until phase 5 moves it onto the new table, so dropping that column
 in an early phase breaks a suite no phase in between is scoped to fix. The honest options
@@ -97,7 +99,7 @@ are a throwaway shim or a different boundary.
 2. **Migrate** — move the consumers over, one phase per consumer if they are big.
 3. **Contract** — delete the old thing and every name that mentions it.
 
-Applied to app, phase 2 became "The schema, additively" (two modules, additive, backfill
+Applied there, phase 2 became "The schema, additively" (two modules, additive, backfill
 included) and a new phase 6 became "Drop the old columns and follow through", placed after
 the tick had moved. Same total work, seven phases instead of six, every gate green alone.
 
@@ -114,13 +116,13 @@ Otherwise the work is done twice, and the first time is the one that runs out of
 
 ## Fill a table or show it, never both in one phase
 
-app's sources design (2026-09-28) split Strava this way — phase 1 the table and the job, phase
+The project's sources design (2026-09-28) split Strava this way — phase 1 the table and the job, phase
 2 the day page — and both committed first try. Its calendar phase did both at once (a CalDAV
 client, the config, the job, the day API, the briefing and the UI), hit the 72k relay line four
 times in 3h38m, and stopped with nothing committed. Split, the source half was already 80%
 written by the stopped attempt.
 
-The measured reason: across app's 44 phases with a design on record, **6 of the 7 phases
+The measured reason: across the project's 44 phases with a design on record, **6 of the 7 phases
 gated in both the root and `cd ui` peaked at 74-116k context** — past the relay line on their
 own. A UI phase is expensive before anything else is added to it, so add nothing else to it.
 `styre check` names these phases in one line.
@@ -140,7 +142,7 @@ a code block mentioning it.
 
 ## Hand over what you already know about the tree
 
-Every pi process finds its way in before it writes. Measured on app's sources run
+Every pi process finds its way in before it writes. Measured on the sources run
 (2026-09-29), up to each process's first `write` or `edit`:
 
 | | tool calls | context used |
@@ -174,7 +176,7 @@ work. The same sentence in prose is a hint; in the criteria list it is the contr
 The gate is the arbiter, so a criterion earns its space by telling the agent something the
 gate cannot say — *which* rows, *which* file, *what* the assertion looks like.
 
-Watch `fix_rounds_self` in `summary.md`. App's phase 1 committed on the first orchestrator
+Watch `fix_rounds_self` in `summary.md`. One phase 1 committed on the first orchestrator
 attempt with **six self-fix rounds** inside it: the agent found and fixed six things the
 criteria stated less plainly than the gate enforced. That gap is invisible in the commit and
 is the clearest signal that a criterion needs rewriting before the next run.
@@ -185,7 +187,7 @@ and the phase fails for doing what the design said.
 
 ## Run any DDL or command the design hands over, once, before shipping it
 
-Ordering constraints are invisible in prose. App's phase 2 shipped a migration that dropped
+Ordering constraints are invisible in prose. The same phase 2 shipped a migration that dropped
 `todos.remind_at` while `idx_todos_open_remind` still indexed it, which SQLite refuses; the
 agent discovered `DROP INDEX` had to come first and spent context on it. One `sqlite3` run
 against an empty database would have caught it. The same goes for a gate command: run it on
@@ -196,12 +198,12 @@ the current tree so the phase does not open on a failure it did not cause.
 | What styre reports | What it usually is | The design fix |
 | --- | --- | --- |
 | "the model returned an empty response" | the host refused the prefill: the phase's context outgrew KV | split the phase; check `max(totalTokens)` in `summary.md` against the last phase that committed |
-| gate still red after `--retries` | the design contradicts the repo — a fixture, a frozen assertion, a name already taken | patch the design, not the phase; `styre check`'s reference review is where this shows up before the run |
+| gate still red after `--retries` | the design contradicts the repo — a fixture, a frozen assertion, a name already taken | patch the design, not the phase; running each gate command by hand before the run is where this shows up |
 | guard rejected the diff | the design asked for a skip marker, or for deleting tests | reword the criterion; the guard outranks the human here by design |
 | timed out while still printing | memory thrash on the host — forward progress stopped, output did not | the idle watchdog cannot see this one; it is the same fix as the first row |
 | "the context outgrew … tokens N times" | the phase does two jobs, or learns something the design should have said | split data from display; add the snippet for any library it probed (`python -c` in the log) |
 
-`styre summarize` is the input to all four. Read the peak context of the phase that failed
+`styre summarize` is the input to all of them. Read the peak context of the phase that failed
 and of the last one that worked: the difference is the size of the split you need.
 
 ## Before the run

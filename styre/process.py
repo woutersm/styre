@@ -186,8 +186,8 @@ def stream_pi(cmd, timeout=None, log=None, events=None, quiet=False, relay_at=No
             lg.close()
         return rc
 
-    # Every pi process gets styre's own config directory, never the operator's shell
-    # environment — see PI_CONFIG_DIR. Gate commands and git keep the inherited env.
+    # Every pi process gets styre's own config directory, never the user's interactive
+    # one — see PI_CONFIG_DIR. Gate commands and git keep the inherited env.
     env = {**os.environ, "PI_CODING_AGENT_DIR": str(PI_CONFIG_DIR)}
     try:
         p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,

@@ -289,7 +289,7 @@ def quiet_timeline(self_rounds):
 
 def test_a_red_styre_gate_on_the_way_to_green_is_not_called_out(tmp_path):
     """With styre_gate, running the gate early and seeing it red is the workflow, not a sign
-    of an unclear criterion (app's today run, 2026-09-30: 6 of 8 phases flagged for it)."""
+    of an unclear criterion (a real run, 2026-09-30: 6 of 8 phases flagged for it)."""
     run = make_run(tmp_path, timeline=quiet_timeline(1))
     with_agent_gates(run, 1, [False, True])
     text = render(collect(run))

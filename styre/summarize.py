@@ -121,9 +121,9 @@ def thinking_tokens(usage, content=None):
     """The thinking tokens in one assistant message, or None when nothing says.
 
     The provider's `usage.reasoning` when it can back it; otherwise the message's output split
-    by characters across its thinking, text and tool-call blocks. mlxserve reported `0` on a
+    by characters across its thinking, text and tool-call blocks. One MLX server reported `0` on a
     message carrying a 66,781-character thinking block (2026-09-23), so a zero beside
-    thinking blocks is not believed. modelhost's figure agreed with the character split within
+    thinking blocks is not believed. Its replacement's figure agreed with the character split within
     4 points on three phases (2026-09-29), so a reported figure is otherwise taken as is."""
     blocks = [b for b in content or [] if isinstance(b, dict)]
     thought = sum(len(b.get("thinking") or "") for b in blocks if b.get("type") == "thinking")

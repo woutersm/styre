@@ -124,9 +124,9 @@ def test_an_outsized_phase_is_flagged_by_prompt_size_or_criteria_count():
 
 
 def test_a_phase_that_asks_for_a_skipped_test_is_flagged():
-    """The real collision, app phase 12 on 2026-09-23: the design said to skip on
+    """The real collision, on 2026-09-23: the design said to skip on
     non-macOS, the agent did, and the test guard rejected the phase for it."""
-    text = design(body="`app-launchd.sh --dry-run` exits 0; skip on non-macOS as\n"
+    text = design(body="`launchd.sh --dry-run` exits 0; skip on non-macOS as\n"
                        "`tests/test_scripts.py` already does.")
     assert "skip on non-macOS" in skip_requests(parse_phases(text)[0].body)
     notes = advisories(text, parse_phases(text), [1000])
@@ -146,7 +146,7 @@ def test_skip_outside_a_test_context_is_not_a_skipped_test():
 
 
 def test_a_subject_that_skips_is_not_a_skipped_test():
-    """Measured on app's phase 5, which the loose version flagged: "skipping" here is the
+    """Measured on a real phase, which the loose version flagged: "skipping" here is the
     behaviour under test, and a warning that cries wolf is one the reader learns to skim."""
     assert skip_requests("31 January → 28 February. This is the regression test for "
                          "`rrule`'s skipping behaviour.") is None
@@ -158,7 +158,7 @@ def test_a_clean_design_gets_no_advisories():
 
 
 def test_phases_gated_in_two_toolchains_are_named_once():
-    """Measured on app (2026-09-29): 6 of the 7 phases gated in the root and in `cd ui` peaked
+    """Measured on a real project (2026-09-29): 6 of the 7 phases gated in the root and in `cd ui` peaked
     at 74-116k. Every UI phase there is one, so they are named in a single note."""
     from styre.design import advisories, parse_phases, toolchains
     def phase(n, gate):
@@ -172,7 +172,7 @@ def test_phases_gated_in_two_toolchains_are_named_once():
 
 
 def test_a_new_library_without_an_example_is_flagged(tmp_path):
-    """app sources phase 3 (2026-09-28): the design named `icalendar` as a dependency and
+    """A real phase (2026-09-28): the design named `icalendar` as a dependency and
     gave no example of it, and each of four steps spent ~12 `python -c` calls learning its API."""
     from styre.design import advisories, parse_phases
     (tmp_path / "pyproject.toml").write_text('dependencies = ["httpx>=0.27"]\n')

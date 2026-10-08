@@ -46,21 +46,21 @@ READ_WINDOW = 160
 NEGATION_WINDOW = 40
 MANY_CRITERIA = 8
 # A phase gated by two toolchains at once — the gate runs in the root *and* in `cd ui` — is
-# a phase that changes a backend and the UI that shows it. Measured over app's 44 phases with
+# a phase that changes a backend and the UI that shows it. Measured over a real project's 44 phases with
 # a design on record (2026-09-29): 6 of the 7 such phases peaked at 74-116k context, past the
 # 72k relay line, and the seventh (a UI shell) at 47k. It is said once, naming the phases:
-# on app every UI phase is one, and a warning per phase would be read as noise. The heuristic
+# there every UI phase is one, and a warning per phase would be read as noise. The heuristic
 # this replaced — paths in 2+ top-level areas — flagged 12 phases of which 6 ran large.
 FULL_STACK = 2
 # A dependency the design names (on a line saying "depend…", or in `uv add`/`npm install`)
-# and the repo does not have yet. On app's sources phase 3 the design named `icalendar` and
+# and the repo does not have yet. On one real phase the design named `icalendar` and
 # gave no example of it, and each of four steps spent ~12 `python -c` calls learning its API.
 DEPENDS_RE = re.compile(r"depend", re.I)
 INSTALL_RE = re.compile(r"\b(?:uv add|pip install|npm install|npm i|pnpm add|yarn add)\s+([^\n`]+)")
 TICKED_RE = re.compile(r"`([@\w][\w./@-]*)`")
 # The test guard rejects an added skip or xfail marker, so a design that *asks* for one has
-# written a phase that cannot pass its own verification. Measured 2026-09-23: app's phase
-# 12 said "skip on non-macOS as `tests/test_scripts.py` already does", the agent did
+# written a phase that cannot pass its own verification. Measured 2026-09-23: a real
+# phase said "skip on non-macOS as `tests/test_scripts.py` already does", the agent did
 # exactly that, and the guard rejected the phase — the guard overruling the human, resolved
 # only by spending a fix round arguing the markers back out. styre's own suite skips on
 # Windows for the same reason, so this is not a rare shape.
