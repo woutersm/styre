@@ -188,10 +188,13 @@ def stream_pi(cmd, timeout=None, log=None, events=None, quiet=False, relay_at=No
 
     # Every pi process gets styre's own config directory, never the user's interactive
     # one — see PI_CONFIG_DIR. Gate commands and git keep the inherited env.
+    # stdin is closed: `pi -p` reads a piped stdin to its end before it starts, so a run
+    # started without a terminal (cron, launchd, a harness) waited out the idle timeout.
     env = {**os.environ, "PI_CODING_AGENT_DIR": str(PI_CONFIG_DIR)}
     try:
-        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-                             encoding="utf-8", errors="replace", bufsize=1, env=env, **_NEW_GROUP)
+        p = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                             stderr=subprocess.STDOUT, text=True, encoding="utf-8",
+                             errors="replace", bufsize=1, env=env, **_NEW_GROUP)
     except FileNotFoundError as e:
         emit(f"[styre] command not found: {e}")
         return finish(127)
@@ -262,11 +265,13 @@ def stream_pi(cmd, timeout=None, log=None, events=None, quiet=False, relay_at=No
 def run(cmd, timeout=None, log=None, shell=False):
     """Run a command, append its output to a log file, return (returncode, output).
 
-    The child gets its own process group so a timeout can take down the whole tree.
+    The child gets its own process group so a timeout can take down the whole tree, and no
+    stdin: nobody is there to type, and a gate command that waits for input would only time out.
     """
     try:
-        p = subprocess.Popen(cmd, shell=shell, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                             text=True, encoding="utf-8", errors="replace", **_NEW_GROUP)
+        p = subprocess.Popen(cmd, shell=shell, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                             stderr=subprocess.STDOUT, text=True, encoding="utf-8",
+                             errors="replace", **_NEW_GROUP)
     except FileNotFoundError as e:
         out, rc = f"[styre] command not found: {e}", 127
     else:

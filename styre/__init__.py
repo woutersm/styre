@@ -9,6 +9,6 @@ what happened.
 # version, so `uv tool install --force` silently reuses a stale wheel when the version has
 # not moved — that is how one run went out with the old prompt builder.
 # The version is recorded in every run's timeline, so a stale install is visible afterwards.
-__version__ = "0.24.0"
+__version__ = "0.25.0"
 
 __all__ = ["__version__"]
