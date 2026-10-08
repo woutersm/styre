@@ -1,9 +1,9 @@
 # styre
 
-An overnight phase orchestrator for the pi coding agent (`@earendil-works/pi-coding-agent`).
+An unattended phase orchestrator for the pi coding agent (`@earendil-works/pi-coding-agent`).
 
 Point it at a design document split into phases. It runs one fresh pi process per phase,
-serially, unattended. In the morning there is one git commit per phase and logs showing
+serially, unattended. When it ends there is one git commit per phase and logs showing
 what happened.
 
 ## Goal and scope
@@ -73,7 +73,7 @@ to cut one so its gate is green on its own work.
 ## What happens per phase
 
 0. **Preflight**, once: the design parses, `pi` is on PATH, styre's pi config exists, the tree
-   is clean, and the run switches to `overnight/<design-name>` — an existing run branch is
+   is clean, and the run switches to `styre/<design-name>` — an existing run branch is
    checked out, never reset (`--reset-branch` is the explicit, destructive opt-in). The styre
    block is written into `AGENTS.md`, which pi loads into every run: standing rules live
    there, only phase-specific material goes in the prompt.
@@ -157,7 +157,7 @@ AGENTS.md                 committed; only the styre block is managed
 - **The decisions log is written but not transmitted.** It is the agent's ungated
   self-report; passing it forward as fact contradicts the rule above. `notes-next.md` is the
   phase-to-phase channel.
-- **The timeout is idle time, not a deadline**: a hung pi process stalls a whole night, a
+- **The timeout is idle time, not a deadline**: a hung pi process stalls a whole run, a
   long productive phase must not be killed.
 - **The agent reports through tools** (`styre-tools.js`) writing the same `.styre/` files;
   styre still runs the gate itself, and only that run decides.

@@ -136,7 +136,7 @@ def build_parser():
     run.add_argument("--allow-test-changes", action="store_true",
                      help="turn off the skipped/removed test guard")
     run.add_argument("--branch", default=None, metavar="NAME",
-                     help="run branch (default overnight/<design-stem>)")
+                     help="run branch (default styre/<design-stem>)")
     run.add_argument("--allow-dirty", action="store_true", help="start with an unclean working tree")
     run.add_argument("--reset-branch", action="store_true",
                      help="discard an existing run branch and restart it at HEAD (destructive)")

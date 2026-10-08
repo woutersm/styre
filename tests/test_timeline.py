@@ -10,11 +10,11 @@ def read(path):
 
 def test_events_are_appended_with_a_timestamp(tmp_path):
     tl = Timeline(tmp_path / "timeline.jsonl")
-    tl.event("run_start", branch="overnight/x")
+    tl.event("run_start", branch="styre/x")
     tl.event("run_end", exit_code=0)
     events = read(tmp_path / "timeline.jsonl")
     assert [e["event"] for e in events] == ["run_start", "run_end"]
-    assert events[0]["branch"] == "overnight/x" and events[1]["exit_code"] == 0
+    assert events[0]["branch"] == "styre/x" and events[1]["exit_code"] == 0
     assert all(e["ts"] for e in events)
 
 

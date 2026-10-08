@@ -231,7 +231,7 @@ def new_dependencies(text, phase, have):
 
 def advisories(text, phases, sizes, design_path="", root=None):
     """Things that make a design risky without making it unrunnable, so `check` can say them
-    before a night is spent rather than after. `sizes` is each phase's prompt length in
+    before a run is spent rather than after. `sizes` is each phase's prompt length in
     bytes, parallel to `phases`. `root` is the target repository, for what it already
     depends on; without it that check is skipped."""
     out = []

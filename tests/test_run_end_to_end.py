@@ -51,7 +51,7 @@ def test_the_decisions_log_is_committed_but_reaches_no_later_prompt(styre, repo,
 def test_the_run_branch_is_named_after_the_design(styre, repo, commits):
     styre("run", "design.md", "--quiet")
     head = (repo / ".git" / "HEAD").read_text(encoding="utf-8").strip()
-    assert head.endswith("refs/heads/overnight/design")
+    assert head.endswith("refs/heads/styre/design")
 
 
 def test_a_failed_gate_is_fixed_and_then_committed(styre, repo, commits):
@@ -215,7 +215,7 @@ def test_the_timeline_records_the_whole_run(styre, repo, commits):
     assert kinds.count("gate_start") == kinds.count("gate_end") == 2
 
     start = events[0]
-    assert start["branch"] == "overnight/design" and start["pi_version"] == "0.85.1-fake"
+    assert start["branch"] == "styre/design" and start["pi_version"] == "0.85.1-fake"
     assert start["phases"] == 2 and len(start["design_sha256"]) == 16 and start["templates"]
 
     pi_end = next(e for e in events if e["event"] == "pi_end")

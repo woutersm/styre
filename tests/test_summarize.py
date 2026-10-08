@@ -125,7 +125,7 @@ def test_thinking_is_not_reported_as_zero_when_the_provider_omits_it():
 
 TIMELINE = [
     {"ts": "2026-09-20T22:00:00+02:00", "event": "run_start", "run": "20260920-220000",
-     "design": "d.md", "branch": "overnight/d", "pi_version": "0.85.1", "styre": "0.1.0",
+     "design": "d.md", "branch": "styre/d", "pi_version": "0.85.1", "styre": "0.1.0",
      "design_sha256": "abc123", "templates": "def456", "phases": 2, "from_phase": 1},
     {"ts": "2026-09-20T22:00:01+02:00", "event": "pi_end", "phase": 1, "step": "builder",
      "seconds": 600.0, "rc": 0},
@@ -157,7 +157,7 @@ def test_the_timeline_drives_the_phase_table(tmp_path):
     assert phase.sha == "a" * 40
     text = render(summary)
     assert "| 1 | Phase 1: One | committed | aaaaaaa | 15.0      | 0.8" in text
-    assert "0.85.1" in text and "overnight/d" in text and "templates def456" in text
+    assert "0.85.1" in text and "styre/d" in text and "templates def456" in text
 
 
 def test_self_corrected_rounds_without_visible_ones_are_called_out(tmp_path):
@@ -197,7 +197,7 @@ def test_summarize_writes_summary_md_into_the_run(tmp_path):
 
 
 def test_the_commit_sha_is_in_the_table(tmp_path):
-    """The rollback point is the most useful thing in a morning report; it used to be
+    """The rollback point is the most useful thing in a run's report; it used to be
     collected off the timeline and then never rendered."""
     text = render(collect(make_run(tmp_path, timeline=TIMELINE)))
     assert "| Commit " in text and "aaaaaaa" in text

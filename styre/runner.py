@@ -162,7 +162,7 @@ def preflight(design_path, opts):
     if not opts.allow_dirty and is_dirty():
         raise PreflightError("Working tree is not clean. Commit or stash first (or pass --allow-dirty).")
 
-    branch = opts.branch or f"overnight/{Path(design_path).stem}"
+    branch = opts.branch or f"styre/{Path(design_path).stem}"
     exists = branch_exists(branch)
     if exists and opts.reset_branch:
         if git("checkout", "-B", branch)[0] != 0:
@@ -399,7 +399,7 @@ def run_phase(ctx, n):
 
 
 def pi_version():
-    """What pi reports as its version, or None. Recorded once per run: an overnight failure
+    """What pi reports as its version, or None. Recorded once per run: an unattended failure
     is worth being able to pin to a version afterwards."""
     rc, out = run_command([PI[0], "--version"], timeout=30)
     return out.strip().splitlines()[0] if rc == 0 and out.strip() else None
@@ -426,7 +426,7 @@ def orchestrate(design_path, opts, run):
     tl.event("run_end", exit_code=1 if stopped else 0, committed=committed, stopped=stopped)
     # The run's own report is `summarize`'s, read back off the timeline it just wrote: the
     # numbers are measured rather than accumulated as we went, and there is one report
-    # format rather than a morning one and an evening one that can disagree.
+    # format rather than two that can disagree.
     print("\n" + summarize(run))
     print(f"[styre] run {run.id}: {run.root}")
     return 1 if stopped else 0

@@ -7,7 +7,7 @@ not trusting that account is the point of the orchestrator.
 Three sources, in order of authority: `timeline.jsonl` for what the orchestrator did and how
 long it took, `logs/phaseN.events.jsonl` for token usage and failed tool calls, and the
 `phaseN.state.json` files for what the agent said about itself. Any of them may be missing —
-a run killed at 3am is the one most worth summarising — so every reader degrades to a
+a run killed mid-phase is the one most worth summarising — so every reader degrades to a
 partial answer instead of failing.
 """
 from __future__ import annotations
@@ -172,7 +172,7 @@ class Phase:
 
     @property
     def problems(self):
-        """Worth reading about in the morning. A phase that committed cleanly but corrected
+        """Worth reading about afterwards. A phase that committed cleanly but corrected
         itself several times counts: that gap is the clearest sign of a criterion the design
         states less plainly than its gate enforces, and it is invisible in the table."""
         return bool(self.failed_gates or self.pi_failures or self.guard_problems or self.unmet
@@ -435,7 +435,7 @@ def phase_table(summary):
 
 
 def where_to_look(summary):
-    """The part worth reading in the morning: everything that did not go straight through."""
+    """The part worth reading first: everything that did not go straight through."""
     out = ["## Where to look", ""]
     for p in summary.phases:
         if not p.problems:

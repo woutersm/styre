@@ -57,11 +57,11 @@ styre check docs/my-design.md    # validate; print phases, gates, prompt sizes a
 styre run docs/my-design.md      # run every phase, one commit each
 ```
 
-In the morning:
+Afterwards:
 
 ```sh
 styre summarize                  # what happened: per phase time, context, fix rounds, where to look
-git log --oneline overnight/my-design
+git log --oneline styre/my-design
 ```
 
 A stopped run resumes with `styre run docs/my-design.md --from-phase N`.
@@ -115,7 +115,7 @@ two-phase example.
 
 | What | Where |
 | --- | --- |
-| A branch | `overnight/<design name>` (`--branch` to choose) |
+| A branch | `styre/<design name>` (`--branch` to choose) |
 | One commit per phase | on that branch |
 | The rules block | `AGENTS.md`, between styre's markers |
 | The agent's decision log | `docs/decisions.md`, append-only, committed; no later phase reads it |
@@ -150,7 +150,7 @@ ln -s "$(pwd)/skill" ~/.claude/skills/styre    # from a clone of this repository
 
 ## Safety
 
-pi has no sandbox and runs commands without asking. Run overnight jobs in an ordinary clone of
+pi has no sandbox and runs commands without asking. Run it in an ordinary clone of
 the target repository, with only the credentials the job needs. styre bounds time (an idle
 timeout per step, a timeout per gate command) but not spend: set a limit with your model
 provider.

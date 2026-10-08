@@ -1,6 +1,6 @@
 # wordfreq: a word frequency CLI
 
-This is a small example design for testing the overnight orchestrator. It should take a few
+This is a small example design for trying styre. It should take a few
 minutes per phase.
 
 ## Context

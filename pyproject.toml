@@ -5,13 +5,13 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "styre"
 dynamic = ["version"]      # one source of truth: styre/__init__.py
-description = "Run a phased design through the pi coding agent overnight: one fresh process and one commit per phase, gated by your own tests"
+description = "Run a phased design through the pi coding agent, unattended: one fresh process and one commit per phase, gated by your own tests"
 readme = "README.md"
 requires-python = ">=3.9"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Martijn Wouters", email = "martijn@wouters.dev" }]
-keywords = ["coding-agent", "orchestrator", "pi", "llm", "automation", "overnight"]
+keywords = ["coding-agent", "orchestrator", "pi", "llm", "automation", "unattended"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",

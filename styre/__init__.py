@@ -1,7 +1,7 @@
-"""styre: an overnight phase orchestrator for the pi coding agent.
+"""styre: an unattended phase orchestrator for the pi coding agent.
 
 Point it at a design document split into phases. It runs one fresh pi process per phase,
-serially, unattended. In the morning there is one git commit per phase and logs showing
+serially, unattended. When it ends there is one git commit per phase and logs showing
 what happened.
 """
 

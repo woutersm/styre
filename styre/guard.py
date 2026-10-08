@@ -61,7 +61,7 @@ def verify(phase, log, gate_timeout=None, allow_test_changes=False, timeline=Non
     for cmd in phase.gate:
         # Printed before the command runs, finished after it: a gate is the longest silence
         # in a phase — a test suite can hold the terminal for minutes — and an unattended run
-        # being watched at 11pm should show what it is waiting on rather than nothing.
+        # being watched should show what it is waiting on rather than nothing.
         print(f"    $ {cmd}", end="", flush=True)
         started = time.monotonic()
         with tl.span("gate", phase=phase_n, step=step, command=cmd) as end:
