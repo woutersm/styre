@@ -260,7 +260,9 @@ def touches_styre(name, args):
     return False
 
 
-CAT = re.compile(r"\b(cat|less|more|head|tail|sed|awk|nl)\b[^|;&]*\btax\.py")
+# A pager or filter with tax.py among its arguments. Not past a newline or a redirection:
+# `cat > notes.md <<EOF` writes, and its heredoc may well mention tax.py.
+CAT = re.compile(r"\b(cat|less|more|head|tail|sed|awk|nl)\b[^|;&>\n]*\btax\.py")
 
 CHECKS = {
     "done": lambda f: f["state"].get("status") == "DONE",
@@ -310,11 +312,31 @@ def report(results, reps, stamp):
     return "\n".join(out) + "\n"
 
 
+def rescore(base):
+    """The report again from a run's facts, after a check is corrected."""
+    results = {}
+    for line in (base / "facts.jsonl").read_text(encoding="utf-8").splitlines():
+        f = json.loads(line)
+        sc = next(s for s in SCENARIOS if s.name == f["scenario"])
+        # Runs before `files` was recorded keep their stored no_stub_package result.
+        checks = {k: CHECKS[k](f) if k != "no_stub_package" or "files" in f else f["checks"][k]
+                  for k in sc.checks}
+        results.setdefault(sc.name, []).append((checks, f))
+    reps = max(len(t) for t in results.values())
+    text = report(results, reps, base.name)
+    (base / "report.md").write_text(text, encoding="utf-8")
+    print(text)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--reps", type=int, default=5)
     ap.add_argument("--only", nargs="*", help="scenario names")
+    ap.add_argument("--rescore", metavar="RUN_DIR",
+                    help="re-apply the checks to a finished run's facts.jsonl; calls no model")
     args = ap.parse_args()
+    if args.rescore:
+        return rescore(Path(args.rescore))
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     base = ROOT / "evals" / "runs" / stamp
     results = {}
@@ -330,7 +352,7 @@ def main():
                   f"  ({facts['minutes']} min)", flush=True)
             (base / "facts.jsonl").open("a", encoding="utf-8").write(json.dumps(
                 {"scenario": sc.name, "trial": r, "checks": checks,
-                 **{k: v for k, v in facts.items() if k != "files"}}) + "\n")
+                 **facts}) + "\n")
     text = report(results, args.reps, stamp)
     (base / "report.md").write_text(text, encoding="utf-8")
     print("\n" + text)
