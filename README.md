@@ -62,6 +62,10 @@ Every mechanism above exists because a real run failed without it. Some of the m
 [`CLAUDE.md`](https://github.com/woutersm/styre/blob/main/CLAUDE.md) is the full design record:
 how it works, what was measured, and which decisions are settled.
 
+[`evals/`](https://github.com/woutersm/styre/tree/main/evals) checks the interfaces against
+the model and the history: whether the builder keeps the contract its tools and docs set
+out, and whether `styre check`'s warnings predict the phases that go badly.
+
 ## Requirements
 
 - Python 3.9+ (stdlib only, no dependencies)

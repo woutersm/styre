@@ -40,6 +40,7 @@ read.
 | `skill/SKILL.md` | The Claude Code skill (`/styre`): the director's loop. |
 | `skill/DIRECTOR.md` | How a person and an interactive assistant work with styre: five rules. |
 | `skill/writing-designs.md` | How to shape a design before a run. For the author — never named in a design (`advisories()` flags it). |
+| `evals/` | Development evals, not runtime: `interface.py` (does the model follow the contract, against real pi) and `advisories.py` (do `check`'s warnings predict trouble, over a repo's run history). |
 | `TODO.md` | What is left and what is parked. |
 | `tests/` | pytest. `fake_pi.py` is installed on `PATH` as `pi`, so the whole loop runs without a model. `tests/fixtures/*.jsonl` are real captured pi output: write parsers against these, not assumptions. |
 
