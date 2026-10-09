@@ -12,13 +12,18 @@ lives in `CLAUDE.md`; this file is the list, not the record.
 - [ ] **`styre summarize --compare runA runB`.** Two runs side by side per phase: agent time,
       peak context, restarts, fix rounds, styre tool calls. Needed to judge a change to styre
       itself against the run before it.
-- [ ] **Check the model host before phase 1.** A sleeping or unreachable host kills a run
-      after preflight has passed. Preflight can ask the provider's `/v1/models` and refuse to
-      start. No `--skip` flag.
 - [ ] **`check`'s new-dependency warning misreads names as packages.** It has flagged a
       function, a file the phase creates and an attribute as libraries "this repo does not
       depend on yet". Match backticked names against the dependency manifest's own
       vocabulary, not any lowercase identifier.
+      Scored over a real project's runs (`evals/results/advisories.md`), 31% of the phases it
+      flagged went badly against a base rate of 49%: as it stands it is noise.
+- [ ] **Delete the large-phase warning.** It flagged 5 phases in `evals/results/advisories.md`
+      and none went badly.
+- [ ] **Harder interface scenarios.** Every scenario in `evals/results/interface.md` passes
+      5/5, so they catch regressions in styre's interface but cannot tell two models apart.
+      First gap: a relay, a phase continued from its progress file in a fresh process, the
+      one mechanism no scenario exercises against a real model.
 
 ## Known limitations
 
@@ -39,6 +44,8 @@ Understood, not scheduled. None is currently worth code.
 
 - Spend and time budgets, a placeholder scan, parallel phases, run notifications, a queue
   of designs (the director chains runs, `skill/DIRECTOR.md`).
+- A preflight check of the model host (`/v1/models`): styre makes no network request of its
+  own, and an unreachable host already stops the run at phase 1.
 - **Not again without a new reason:** hidden held-out tests (built and removed as more
   complexity than they were worth); anything that calls a model or makes a judgement, such
   as an automatic escape hatch, an automatic review or a run narrative (all the director's,
