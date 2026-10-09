@@ -1,5 +1,7 @@
 # styre
 
+[![test](https://github.com/woutersm/styre/actions/workflows/test.yml/badge.svg)](https://github.com/woutersm/styre/actions/workflows/test.yml)
+
 Hand a phased design to a local coding model, leave it running, and come back to one git
 commit per phase, each one passed by your own tests.
 
@@ -78,10 +80,9 @@ of faking a gate that could not pass.
 ## Install
 
 ```sh
-uv tool install styre          # or: pipx install styre
+uv tool install git+https://github.com/woutersm/styre
+# or: pipx install git+https://github.com/woutersm/styre
 ```
-
-From source: `uv tool install git+https://github.com/woutersm/styre`.
 
 ## Give pi a config of its own
 
