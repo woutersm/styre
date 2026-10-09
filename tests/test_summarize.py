@@ -291,3 +291,15 @@ def test_a_styre_gate_that_stayed_red_is_called_out(tmp_path):
     with_agent_gates(run, 1, [False, False, False, True])
     text = render(collect(run))
     assert "the agent's own gate was red 3 times before it passed" in text
+
+
+def test_a_stopped_phase_names_its_last_progress_file(tmp_path):
+    """A resume starts the phase without it, so the director copies it into the design first."""
+    run = make_run(tmp_path, phases=(1, 2), timeline=[
+        {"event": "phase_end", "phase": 1, "status": "committed"},
+        {"event": "phase_end", "phase": 2, "status": "stopped", "reason": "gate failed"}])
+    for n in (1, 2):
+        run.progress(n).write_text("Done: x\nNow: y\nNext: z\nLearned: w\n", encoding="utf-8")
+    text = render(collect(run))
+    assert f"`.styre/runs/{run.id}/phase2.progress.md`" in text
+    assert "phase1.progress.md" not in text

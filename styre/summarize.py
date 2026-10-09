@@ -17,6 +17,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
 
+from styre.config import WORK
 from styre.process import RELAY_RC
 from styre.state import read_state
 
@@ -165,6 +166,7 @@ class Phase:
     resumed: int = 0                                 # fix rounds that continued their session
     compactions_failed: list = field(default_factory=list)  # pi's own error per failed one
     compactions_cancelled: int = 0                   # cancelled by styre's no-compaction extension
+    progress: str | None = None                      # the archived progress file, when there is one
 
     @property
     def name(self):
@@ -310,6 +312,8 @@ def collect(run):
         phase_of(summary.phases, n)
     summary.phases.sort(key=lambda p: p.n)
     for phase in summary.phases:
+        if run.progress(phase.n).is_file():
+            phase.progress = f"{WORK.as_posix()}/runs/{run.id}/{run.progress(phase.n).name}"
         if run.events(phase.n).exists():
             read_phase_events(run, phase)
         else:
@@ -471,6 +475,11 @@ def where_to_look(summary):
                        + ": the phase is doing more work than one context holds")
         for message, times in unique(p.compactions_failed):
             out.append(f"- pi's compaction failed{f' ({times}x)' if times > 1 else ''}: {oneline(message)}")
+        # What the agent had learned when it stopped is the material for fixing the phase
+        # text before resuming (skill/DIRECTOR.md, rule 3); a resume starts without it.
+        if p.progress and p.status != "committed":
+            out.append(f"- its last progress file is `{p.progress}`: copy what it found into "
+                       "the phase text before resuming")
         if p.resumed:
             out.append(f"- {p.resumed} fix round(s) resumed their session instead of starting fresh")
         out.append("")

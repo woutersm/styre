@@ -7,8 +7,6 @@ lives in `CLAUDE.md`; this file is the list, not the record.
 
 - [ ] **A time limit per bash call** (~10 min), enforced by styre, not left to the agent.
       A hanging `uv run python` probe once cost 2 hours before the idle timeout fired.
-- [ ] **On a stop, `summary.md` names the last progress file**, so its findings can be copied
-      into the phase text before resuming (`skill/DIRECTOR.md` rule 3).
 - [ ] **`styre summarize --compare runA runB`.** Two runs side by side per phase: agent time,
       peak context, restarts, fix rounds, styre tool calls. Needed to judge a change to styre
       itself against the run before it.
