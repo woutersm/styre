@@ -90,7 +90,7 @@ def test_a_preamble_that_says_read_a_document_is_flagged():
     returned nothing, and styre reported "no state file written"."""
     text = design('**"The design" means `docs/agent-design.md`.** Read it first.')
     assert doc_references(preamble(text)) == ["docs/agent-design.md"]
-    notes = advisories(text, parse_phases(text), [1000])
+    notes = advisories(text, parse_phases(text))
     assert any("docs/agent-design.md" in n and "unbounded prompt" in n for n in notes)
 
 
@@ -112,24 +112,13 @@ def test_the_designs_own_filename_and_the_contract_files_are_not_flagged():
     assert doc_references(preamble(text), design_path="docs/plan.md") == []
 
 
-def test_an_outsized_phase_is_flagged_by_prompt_size_or_criteria_count():
-    text = design(criteria=9)
-    phases = parse_phases(text)
-    assert any("9 exit criteria" in n for n in advisories(text, phases, [1000]))
-    # and by size against its neighbours
-    two = parse_phases(design(criteria=1) + "\n## Phase 2: Y\nb\n\n### Exit criteria\n- a\n\n"
-                       "### Gate\n```\ntrue\n```\n")
-    notes = advisories("x", two, [1000, 9000])
-    assert any("Phase 2 is large" in n and "9.0x the median" in n for n in notes)
-
-
 def test_a_phase_that_asks_for_a_skipped_test_is_flagged():
     """The real collision, on 2026-09-23: the design said to skip on
     non-macOS, the agent did, and the test guard rejected the phase for it."""
     text = design(body="`launchd.sh --dry-run` exits 0; skip on non-macOS as\n"
                        "`tests/test_scripts.py` already does.")
     assert "skip on non-macOS" in skip_requests(parse_phases(text)[0].body)
-    notes = advisories(text, parse_phases(text), [1000])
+    notes = advisories(text, parse_phases(text))
     assert any("Phase 1 asks for a skipped test" in n and "test guard rejects" in n
                for n in notes)
 
@@ -154,7 +143,7 @@ def test_a_subject_that_skips_is_not_a_skipped_test():
 
 def test_a_clean_design_gets_no_advisories():
     text = design("A short preamble every phase needs.")
-    assert advisories(text, parse_phases(text), [1000]) == []
+    assert advisories(text, parse_phases(text)) == []
 
 
 def test_phases_gated_in_two_toolchains_are_named_once():
@@ -167,7 +156,7 @@ def test_phases_gated_in_two_toolchains_are_named_once():
             + phase(3, "cd ui/ && npm run build\nuv run mypy src"))
     phases = parse_phases(text)
     assert [toolchains(p) for p in phases] == [["."], [".", "ui"], [".", "ui"]]
-    notes = [n for n in advisories(text, phases, [1000] * 3) if "toolchain" in n]
+    notes = [n for n in advisories(text, phases) if "toolchain" in n]
     assert len(notes) == 1 and notes[0].startswith("Phase(s) 2, 3 are gated")
 
 
@@ -188,11 +177,11 @@ def test_a_new_library_without_an_example_is_flagged(tmp_path):
     later = ("## Phase 3: Chart\nRun `npm install recharts`, then draw it with `recharts`.\n"
              "### Exit criteria\n- it works\n### Gate\n```\npytest\n```\n")
     text = pre + bare + shown + later
-    notes = [n for n in advisories(text, parse_phases(text), [1000] * 3, root=tmp_path)
+    notes = [n for n in advisories(text, parse_phases(text), root=tmp_path)
              if "does not depend" in n]
     assert [n.split(", which")[0] for n in notes] == [
         "Phase 1 uses `icalendar`, `recurring-ical-events`",  # httpx is installed; phase 2 shows it
         "Phase 3 uses `recharts`"]
-    assert advisories(text, parse_phases(text), [1000] * 3) == [n for n in advisories(
-        text, parse_phases(text), [1000] * 3) if "does not depend" not in n]  # no root: skipped
+    assert advisories(text, parse_phases(text)) == [n for n in advisories(
+        text, parse_phases(text)) if "does not depend" not in n]  # no root: skipped
 

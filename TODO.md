@@ -18,8 +18,6 @@ lives in `CLAUDE.md`; this file is the list, not the record.
       vocabulary, not any lowercase identifier.
       Scored over a real project's runs (`evals/results/advisories.md`), 31% of the phases it
       flagged went badly against a base rate of 49%: as it stands it is noise.
-- [ ] **Delete the large-phase warning.** It flagged 5 phases in `evals/results/advisories.md`
-      and none went badly.
 - [ ] **Harder interface scenarios.** Every scenario in `evals/results/interface.md` passes
       5/5, so they catch regressions in styre's interface but cannot tell two models apart.
       First gap: a relay, a phase continued from its progress file in a fresh process, the

@@ -12,7 +12,7 @@ A warning is useful when its precision beats the base rate. Precision: of the ph
 | preamble names documents | 11 | 4/11 (36%) | 4/50 (8%) | 4/11 (36%) | 4/15 (27%) |
 | asks for a skipped test | 1 | 0/1 (0%) | 0/50 (0%) | 0/1 (0%) | 0/15 (0%) |
 | names a document | 2 | 0/2 (0%) | 0/50 (0%) | 0/2 (0%) | 0/15 (0%) |
-| large phase | 5 | 0/5 (0%) | 0/50 (0%) | 0/5 (0%) | 0/15 (0%) |
+| large phase (since removed) | 5 | 0/5 (0%) | 0/50 (0%) | 0/5 (0%) | 0/15 (0%) |
 | two toolchains | 49 | 36/49 (73%) | 36/50 (72%) | 10/49 (20%) | 10/15 (67%) |
 | new library, no example | 16 | 5/16 (31%) | 5/50 (10%) | 4/16 (25%) | 4/15 (27%) |
 | any warning | 68 | 40/68 (59%) | 40/50 (80%) | 14/68 (21%) | 14/15 (93%) |

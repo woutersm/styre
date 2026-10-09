@@ -44,7 +44,6 @@ NOT_RE = re.compile(r"\b(do not|don't|never|no need to|rather than|instead of|wi
                     re.I)
 READ_WINDOW = 160
 NEGATION_WINDOW = 40
-MANY_CRITERIA = 8
 # A phase gated by two toolchains at once — the gate runs in the root *and* in `cd ui` — is
 # a phase that changes a backend and the UI that shows it. Measured over a real project's 44 phases with
 # a design on record (2026-09-29): 6 of the 7 such phases peaked at 74-116k context, past the
@@ -229,11 +228,10 @@ def new_dependencies(text, phase, have):
                   and n not in blocks)
 
 
-def advisories(text, phases, sizes, design_path="", root=None):
+def advisories(text, phases, design_path="", root=None):
     """Things that make a design risky without making it unrunnable, so `check` can say them
-    before a run is spent rather than after. `sizes` is each phase's prompt length in
-    bytes, parallel to `phases`. `root` is the target repository, for what it already
-    depends on; without it that check is skipped."""
+    before a run is spent rather than after. `root` is the target repository, for what it
+    already depends on; without it that check is skipped."""
     out = []
     pre = doc_references(preamble(text), design_path)
     if pre:
@@ -253,23 +251,9 @@ def advisories(text, phases, sizes, design_path="", root=None):
         if docs:
             out.append(f"Phase {i} names " + ", ".join(f"`{d}`" for d in docs)
                        + " — check the agent is meant to write it, not read it.")
-    # A phase that is much bigger than its neighbours, or that carries a lot of criteria, is
-    # the shape that fails: one such phase was split in two and went from three failures to
-    # committing on the first try. Both thresholds are advice, never an error.
-    # Lower middle, so a two-phase design can still flag its larger half; on a long
-    # design the choice barely moves.
-    median = (sorted(sizes)[(len(sizes) - 1) // 2]
-              if sizes and len(sizes) == len(phases) else 0)
-    for i, phase in enumerate(phases, 1):
-        size = sizes[i - 1] if median else 0
-        why = []
-        if median and size > 1.6 * median:
-            why.append(f"{size / 1024:.1f} KB, {size / median:.1f}x the median prompt")
-        if len(phase.criteria) > MANY_CRITERIA:
-            why.append(f"{len(phase.criteria)} exit criteria")
-        if why:
-            out.append(f"Phase {i} is large — " + " and ".join(why)
-                       + ". A phase whose title says \"and\" is usually two phases.")
+    # There was a large-phase warning (a prompt 1.6x the median, or more than 8 criteria). It
+    # was removed on 2026-10-09: over a real project's runs it flagged 5 phases and none went
+    # badly (evals/results/advisories.md). The prompt sizes are still printed by `check`.
     wide = [i for i, phase in enumerate(phases, 1) if len(toolchains(phase)) >= FULL_STACK]
     if wide:
         out.append(f"Phase(s) {', '.join(map(str, wide))} are gated in more than one toolchain "

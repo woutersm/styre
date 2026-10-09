@@ -24,8 +24,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from styre.design import advisories, parse_phases, phase_context  # noqa: E402
-from styre.prompts import build_prompt  # noqa: E402
+from styre.design import advisories, parse_phases  # noqa: E402
 from styre.rundir import RunDir  # noqa: E402
 from styre.summarize import collect  # noqa: E402
 
@@ -35,7 +34,6 @@ KINDS = [
     ("preamble names documents", re.compile(r"^The preamble names"), "all"),
     ("asks for a skipped test", re.compile(r"^Phase (\d+) asks for a skipped test"), "one"),
     ("names a document", re.compile(r"^Phase (\d+) names"), "one"),
-    ("large phase", re.compile(r"^Phase (\d+) is large"), "one"),
     ("two toolchains", re.compile(r"^Phase\(s\) ([\d, ]+) are gated"), "list"),
     ("new library, no example", re.compile(r"^Phase (\d+) uses"), "one"),
 ]
@@ -66,10 +64,8 @@ def manifests(repo, commit, into):
 def flagged(text, design_path, root):
     """{kind: set of phase numbers} for one design."""
     phases = parse_phases(text)
-    sizes = [len(build_prompt(phase_context(text, phases, n), n, p, ""))
-             for n, p in enumerate(phases, 1)]
     out = defaultdict(set)
-    for note in advisories(text, phases, sizes, design_path, root=root):
+    for note in advisories(text, phases, design_path, root=root):
         for kind, pattern, how in KINDS:
             m = pattern.match(note)
             if not m:
