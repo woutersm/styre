@@ -77,3 +77,23 @@ def test_defaults_match_the_documented_ones():
     assert (args.retries, args.timeout, args.gate_timeout) == (2, 7200, 900)
     assert args.from_phase == 1 and args.branch is None
     assert not (args.quiet or args.allow_dirty or args.allow_test_changes or args.reset_branch)
+
+
+def test_design_opens_claude_on_the_design_skill(tmp_path, monkeypatch):
+    import styre.cli as cli
+    calls = []
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "not_at_root", lambda: None)
+    monkeypatch.setattr(cli.shutil, "which", lambda name: f"/bin/{name}")
+    monkeypatch.setattr(cli.subprocess, "run",
+                        lambda cmd: calls.append(cmd) or type("R", (), {"returncode": 0})())
+    assert main(["design", "CSV", "export"]) == 0
+    assert calls == [["/bin/claude", "/styre-design CSV export"]]
+
+
+def test_design_without_claude_is_an_error(monkeypatch):
+    import styre.cli as cli
+    monkeypatch.setattr(cli, "not_at_root", lambda: None)
+    monkeypatch.setattr(cli.shutil, "which", lambda name: None)
+    with pytest.raises(SystemExit, match="not on PATH"):
+        main(["design"])

@@ -1,5 +1,7 @@
-"""Command line interface: the `check`, `run` and `summarize` subcommands."""
+"""Command line interface: the `design`, `check`, `run` and `summarize` subcommands."""
 import argparse
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -13,6 +15,7 @@ from styre.runner import PreflightError, context_budget, orchestrate, preflight
 from styre.summarize import history_lines, repo_history, summarize
 
 EXAMPLES = """examples:
+  styre design "CSV export"            write a design with Claude Code (/styre-design)
   styre check design.md                 validate the design and print what it will run
   styre run design.md                   run every phase, one commit each
   styre run design.md --from-phase 2    resume after a stop
@@ -37,6 +40,23 @@ def load_design(path):
     if not phases:
         sys.exit("No '## Phase N: ...' headings found in the design file.")
     return text, phases
+
+
+def cmd_design(args):
+    """Open interactive Claude Code on the /styre-design skill.
+
+    A launcher only: the interview, the judgement and the approval stay with the person
+    and Claude. styre itself still calls no model.
+    """
+    if (root := not_at_root()) is not None:
+        print(f"Run styre from the repository root, not a subdirectory:\n  cd {root}",
+              file=sys.stderr)
+        return 1
+    claude = shutil.which("claude")
+    if claude is None:
+        sys.exit("Claude Code ('claude') is not on PATH: https://claude.com/claude-code")
+    prompt = " ".join(["/styre-design", *args.idea])
+    return subprocess.run([claude, prompt]).returncode
 
 
 def cmd_check(args):
@@ -112,6 +132,11 @@ def build_parser():
         epilog=EXAMPLES)
     ap.add_argument("--version", action="version", version=f"styre {__version__}")
     sub = ap.add_subparsers(dest="command", metavar="<command>")
+
+    design = sub.add_parser(
+        "design", help="write a design with Claude Code: opens claude on /styre-design")
+    design.add_argument("idea", nargs="*", help="what to build, in a sentence (optional)")
+    design.set_defaults(func=cmd_design)
 
     check = sub.add_parser(
         "check", help="validate the design and print its phases, gates and prompt sizes")

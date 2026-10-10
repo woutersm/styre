@@ -124,8 +124,8 @@ without it styre never does.
 
 ## Quick start
 
-Write the design with Claude Code by typing `/styre-design` in the repository you want built
-(see [Using it with Claude Code](#using-it-with-claude-code)), or write it by hand in the
+Write the design with Claude Code: run `styre design "what to build"`, or type `/styre-design`
+in Claude Code, in the repository you want built (see [Using it with Claude Code](#using-it-with-claude-code)), or write it by hand in the
 format below. Then, from the root of that repository:
 
 ```sh
@@ -207,6 +207,7 @@ commits is `AGENTS.md`.
 
 | Command | What it does |
 | --- | --- |
+| `styre design [idea]` | Opens interactive Claude Code on `/styre-design` in this repository. A launcher: you do the interview and approve the design; styre calls no model |
 | `styre check <design>` | Validates the design, prints each phase's gate and prompt size, and warns about designs that tend to fail |
 | `styre run <design>` | Runs it. Options include `--from-phase N` to resume, `--retries`, `--timeout` in seconds of silence with a default of 7200, `--gate-timeout`, `--branch` and `--quiet`. `--help` lists them all. |
 | `styre summarize [run]` | Prints the report for the latest run, or for the one named |

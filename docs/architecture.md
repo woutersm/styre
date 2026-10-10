@@ -11,7 +11,7 @@ flowchart LR
     director["Director<br/>a person, or a person<br/>with Claude Code"]
     design[("design.md")]
     subgraph styre["styre (Python, stdlib only)"]
-        cli["cli.py<br/>check · run · summarize"]
+        cli["cli.py<br/>design · check · run · summarize"]
         runner["runner.py<br/>the phase loop"]
         guard["guard.py<br/>gate + test guard"]
         summarize["summarize.py<br/>the report"]
@@ -46,7 +46,7 @@ Each module has one job.
 
 | Module | Job |
 | --- | --- |
-| `cli.py` | The `check`, `run` and `summarize` subcommands |
+| `cli.py` | The `design`, `check`, `run` and `summarize` subcommands; `design` only opens interactive `claude` on `/styre-design` |
 | `config.py` | Constants, the pi invocation, the context fractions, `RunOptions` |
 | `design.py` | Parses a design into phases, validates it, and produces `check`'s warnings |
 | `prompts.py` | Writes the phase prompt, the fix-round prompts, the handoff and the relay prompt |

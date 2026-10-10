@@ -23,7 +23,7 @@ read.
 
 | File | What it is |
 | --- | --- |
-| `styre/cli.py` | The `check`, `run` and `summarize` subcommands; the `styre` console script. |
+| `styre/cli.py` | The `design` (opens interactive `claude` on `/styre-design`), `check`, `run` and `summarize` subcommands; the `styre` console script. |
 | `styre/config.py` | Constants (`PI`, `PI_CONFIG_DIR`, `WORK`, `DECISIONS`, `AGENTS`, `EXCLUDES`, the context fractions), `context_window()`, and the `RunOptions` bundle. |
 | `styre/design.py` | Parsing a design into `Phase` objects; `phase_context()`; `validate()` (errors) and `advisories()` (warnings); the `check` rendering. |
 | `styre/prompts.py` | The phase prompt, the fix-round prompts (fresh and resumed), the handoff and the relay prompt. |
@@ -151,7 +151,8 @@ AGENTS.md                 committed; only the styre block is managed
 - **No judgement in styre.** It calls no model and makes no network request. Reviewing a run,
   deciding what a stop means and fixing a design are the director's (`skills/styre/DIRECTOR.md`). Claude
   as an automatic escape hatch, an automatic Claude review, the design-to-repo cross-check
-  and the web viewer were built and removed on 2026-10-03 for this reason.
+  and the web viewer were built and removed on 2026-10-03 for this reason. `styre design`
+  only starts interactive Claude Code for the person; styre reads nothing back from it.
 - **The agent's claim of success is never trusted**; the gate is the arbiter. Never commit
   on a red gate. The test guard and the gate are not complexity to trim.
 - **One commit per phase**, no tags: the commit is the rollback point.
