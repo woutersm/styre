@@ -1,6 +1,6 @@
 ---
 name: styre
-description: Use when building something with styre, in any repository — designing a phased design document with the owner, checking it, starting or resuming `styre run`, handling a stopped run, reviewing a finished one, or answering "how is it going". Also when the owner types /styre.
+description: Use when building something with styre, in any repository — starting or resuming `styre run` on an approved design, handling a stopped run, reviewing a finished one, or answering "how is it going". Also when the owner types /styre. For writing a design, use styre-design.
 ---
 
 # Directing styre
@@ -15,10 +15,9 @@ Read beside this file, before acting:
 
 ## The loop
 
-1. **Design.** Ask the owner what and why; write `docs/<name>-design.md` in the target repo.
-   Verify every path, line range, snippet and gate command the design hands over. Run
-   `styre check <design>` from the repo root and walk the owner through every warning.
-   Commit the design. The owner approves before it runs.
+1. **Design.** Follow the `styre-design` skill (`../styre-design/SKILL.md`): interview the
+   owner, write `docs/<name>-design.md`, verify everything it hands over, `styre check` it,
+   and commit it once the owner approves.
 2. **Run.** From the repo root, in the background, keeping the machine awake:
    `nohup caffeinate -i styre run <design> > .styre/run.out 2>&1 &` (no `caffeinate` off
    macOS). Then one background watcher that waits on the styre process and ends with it —

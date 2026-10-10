@@ -476,7 +476,7 @@ def where_to_look(summary):
         for message, times in unique(p.compactions_failed):
             out.append(f"- pi's compaction failed{f' ({times}x)' if times > 1 else ''}: {oneline(message)}")
         # What the agent had learned when it stopped is the material for fixing the phase
-        # text before resuming (skill/DIRECTOR.md, rule 3); a resume starts without it.
+        # text before resuming (skills/styre/DIRECTOR.md, rule 3); a resume starts without it.
         if p.progress and p.status != "committed":
             out.append(f"- its last progress file is `{p.progress}`: copy what it found into "
                        "the phase text before resuming")

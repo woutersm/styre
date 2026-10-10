@@ -39,11 +39,11 @@ Understood, not scheduled. None is currently worth code.
 ## Parked: ask before starting
 
 - Spend and time budgets, a placeholder scan, parallel phases, run notifications, a queue
-  of designs (the director chains runs, `skill/DIRECTOR.md`).
+  of designs (the director chains runs, `skills/styre/DIRECTOR.md`).
 - A preflight check of the model host (`/v1/models`): styre makes no network request of its
   own, and an unreachable host already stops the run at phase 1.
 - **Not again without a new reason:** hidden held-out tests (built and removed as more
   complexity than they were worth); anything that calls a model or makes a judgement, such
   as an automatic escape hatch, an automatic review or a run narrative (all the director's,
-  `skill/DIRECTOR.md`); a web viewer or live panel (`summarize` and the log are how a run
+  `skills/styre/DIRECTOR.md`); a web viewer or live panel (`summarize` and the log are how a run
   is read).

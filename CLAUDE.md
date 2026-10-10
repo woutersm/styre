@@ -15,7 +15,7 @@ itself and inspecting the staged diff. Nothing is committed on a red gate.
 styre does only what needs no judgement: run the phases, keep each one's context small, run
 the gate, commit, and write down what happened. Everything that needs judgement — writing
 the design, deciding what a stop means, reviewing the result — belongs to the person and the
-interactive assistant directing the run, as `skill/DIRECTOR.md` sets out. So styre calls no other
+interactive assistant directing the run, as `skills/styre/DIRECTOR.md` sets out. So styre calls no other
 model, makes no network request of its own, and has no viewer: `summarize` is how a run is
 read.
 
@@ -37,9 +37,11 @@ read.
 | `styre/timeline.py` | The append-and-flush writer behind `<run>/timeline.jsonl`. |
 | `styre/summarize.py` | Reading a run back off disk: `summarize`, and the report `run` prints as it ends. |
 | `styre/pi_extensions/` | Passed to every pi process with `--extension`: `cap-output.js`, `no-compaction.js`, `strip-thinking.js`, and `styre-tools.js` (the agent's `styre_gate`, `styre_progress`, `styre_finish`). |
-| `skill/SKILL.md` | The Claude Code skill (`/styre`): the director's loop. |
-| `skill/DIRECTOR.md` | How a person and an interactive assistant work with styre: five rules. |
-| `skill/writing-designs.md` | How to shape a design before a run. For the author — never named in a design (`advisories()` flags it). |
+| `skills/styre/SKILL.md` | The Claude Code skill (`/styre`): the director's loop. |
+| `skills/styre-design/SKILL.md` | The Claude Code skill (`/styre-design`): writing a design with the owner, up to an approved, checked design. |
+| `skills/styre/DIRECTOR.md` | How a person and an interactive assistant work with styre: five rules. |
+| `skills/styre/writing-designs.md` | How to shape a design before a run. For the author — never named in a design (`advisories()` flags it). |
+| `docs/` | `architecture.md` (how the parts fit, with diagrams) and `lessons.md` (each failure that shaped styre, with its numbers). Update both when a mechanism changes. |
 | `evals/` | Development evals, not runtime: `interface.py` (does the model follow the contract, against real pi) and `advisories.py` (do `check`'s warnings predict trouble, over a repo's run history). |
 | `TODO.md` | What is left and what is parked. |
 | `tests/` | pytest. `fake_pi.py` is installed on `PATH` as `pi`, so the whole loop runs without a model. `tests/fixtures/*.jsonl` are real captured pi output: write parsers against these, not assumptions. |
@@ -69,7 +71,7 @@ uv run pytest -q
 ````
 
 Exit criteria are prose for the agent; the **gate** is what styre enforces. A phase without
-either is a hard error. `skill/writing-designs.md` is the shape: how big a phase may be, and where
+either is a hard error. `skills/styre/writing-designs.md` is the shape: how big a phase may be, and where
 to cut one so its gate is green on its own work.
 
 ## What happens per phase
@@ -147,7 +149,7 @@ AGENTS.md                 committed; only the styre block is managed
 ## Decisions that are settled — ask before reopening
 
 - **No judgement in styre.** It calls no model and makes no network request. Reviewing a run,
-  deciding what a stop means and fixing a design are the director's (`skill/DIRECTOR.md`). Claude
+  deciding what a stop means and fixing a design are the director's (`skills/styre/DIRECTOR.md`). Claude
   as an automatic escape hatch, an automatic Claude review, the design-to-repo cross-check
   and the web viewer were built and removed on 2026-10-03 for this reason.
 - **The agent's claim of success is never trusted**; the gate is the arbiter. Never commit

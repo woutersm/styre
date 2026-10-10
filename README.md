@@ -2,80 +2,79 @@
 
 [![test](https://github.com/woutersm/styre/actions/workflows/test.yml/badge.svg)](https://github.com/woutersm/styre/actions/workflows/test.yml)
 
-Hand a phased design to a local coding model, leave it running, and come back to one git
-commit per phase, each one passed by your own tests.
+styre builds a phased design with a local coding model while nobody watches. Each phase ends
+in one git commit, and a phase is committed only when your own tests pass.
 
 You write a design document split into phases. Each phase says what to build, what must be
-true when it is done, and which commands prove it: the **gate**. styre gives each phase to a
-fresh [pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) process, then runs
-the gate itself and inspects the staged diff. The agent saying it is done counts for nothing:
-a phase is committed only when the gate is green and no test was skipped or deleted. A red
-gate goes back to the agent as a fix round, a limited number of times, and then the run stops
-with the work uncommitted.
+true when it is done, and which commands prove it. Those commands are the gate. styre gives
+each phase to a fresh [pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent)
+process. When the agent stops, styre runs the gate itself and inspects the staged diff. It
+ignores the agent's claim that the work is done. A phase is committed only when the gate
+passes and the diff neither skips nor deletes a test. A failing gate goes back to the agent as
+a fix round. After `--retries` rounds the run stops and leaves the work uncommitted.
 
-> **Status: alpha.** Used on macOS with local 27B models served over an OpenAI-compatible
-> API. Checked against pi 1.0.4: the event stream and the agent tools. Expect rough edges
-> anywhere else.
+> Status: alpha. Used on macOS with local 27B models behind an OpenAI-compatible API, and
+> checked against the event stream and agent tools of pi 1.0.4. Other setups are untested.
 
-## Built for agents
+## Who reads what styre writes
 
-Almost nothing in styre is read by a person while it runs. It has three readers, and each
-one got an interface designed for it.
+No person reads anything styre writes while a run is going. Two agents and styre's own gate
+do, and each has an interface made for it.
 
-**The builder**, a local model inside pi, gets:
+### The builder
 
-- **A tool API with the guardrails in it.** `styre_gate` runs exactly the commands styre will
-  run afterwards and returns pass/fail per command with the tail of each failure, as data.
-  `styre_progress` takes four fields (`done`, `now`, `next`, `learned`) instead of free
-  prose. `styre_finish` **refuses `DONE` unless the last `styre_gate` passed**, and counts
-  the agent's self-fix rounds from the recorded gate runs instead of asking for them.
-- **Docs written for a machine.** A managed block in the target repo's `AGENTS.md`, which pi
-  loads into every request: what is checked after it stops and why reporting success early
-  gains nothing, which files to write and who reads each one, and how to read narrowly. Only
-  standing rules go there; each phase's prompt carries only that phase.
-- **A context budget it cannot overspend.** pi extensions cap what a `read` or a `bash` call
-  puts into context, drop earlier thinking from every request, and cancel compaction. Past
-  75% of the model's window, styre stops the agent between two turns, has it write its
-  progress file, and continues in a fresh process from that file.
+The builder is the local model inside pi. It gets tools, instructions and a context budget.
 
-**The director**, an interactive assistant such as Claude Code, works the loop around styre:
-writing the design with the owner, starting and resuming runs, reading a stop, reviewing the
-result. [`skill/`](https://github.com/woutersm/styre/tree/main/skill) is a Claude Code skill
-for that job, with rules for what it may do without asking.
+**Tools that enforce the rules.** `styre_gate` runs the same commands styre will run
+afterwards and returns pass or fail per command, with the tail of each failure. `styre_progress`
+takes four fields, `done`, `now`, `next` and `learned`, instead of free prose. `styre_finish`
+refuses `DONE` unless the last `styre_gate` call passed. It counts the agent's own fix rounds
+from the recorded gate runs instead of asking the agent.
 
-**The gate** reads no agent's account at all. styre runs the gate commands itself, rejects a
-diff that adds skip/xfail markers or loses test functions, and builds the run's report,
-`summary.md`, from its own measured timeline rather than from anything the agent wrote.
+**Instructions written for a model.** styre keeps a block in the target repository's
+`AGENTS.md`, which pi loads into every request. The block says what styre checks after the
+agent stops, why claiming success early gains nothing, which files to write and who reads each
+one, and how to read a large file in parts. It holds only the rules that apply to every phase.
+Each phase's prompt holds only that phase.
+
+**A context budget.** styre's pi extensions cap what a `read` or `bash` call adds to the
+context, drop earlier thinking from every request, and cancel pi's compaction. When the
+context passes 75% of the model's window, styre stops the agent between two turns, has it
+write its progress file, and continues the phase in a fresh process from that file.
+
+### The director
+
+The director is an interactive assistant such as Claude Code. It writes the design with the
+owner, starts and resumes runs, decides what a stopped phase needs, and reviews the result.
+[`skills/`](https://github.com/woutersm/styre/tree/main/skills) has two Claude Code skills for
+that job: `/styre-design` writes a design with the owner, and `/styre` runs the rest. They list
+what the director may do without asking.
+
+### The gate
+
+The gate never reads anything the agent wrote. styre runs the gate commands itself and rejects
+a diff that adds skip or xfail markers or removes test functions. It writes the run's report,
+`summary.md`, from its own timeline of measured events.
 
 ## What broke, and what styre does about it
 
-Every mechanism above exists because a real run failed without it. Some of the measurements:
+[`docs/lessons.md`](docs/lessons.md) lists the failures from real runs that shaped styre,
+with what it does about each. [`docs/architecture.md`](docs/architecture.md) shows how the
+parts fit, with diagrams.
 
-| What happened | What styre does now |
-| --- | --- |
-| My own interactive pi setup (web tools, a personal `AGENTS.md`) was **47% of every request**. | pi runs under styre's own config directory, and `run` refuses to start without it. Fixed overhead went from 8,331 to 1,639 tokens. |
-| Tool results were **67% of a 60k-token phase**, with single reads of 18,000 characters. | `cap-output.js`: a `read` returns at most 300 lines, a `bash` call its first 60 and last 90, with a note on how to get the rest. |
-| Compaction re-prefilled 48k tokens (**8.5 minutes**); on a server without a thinking budget it failed 16 times in one phase. | Compaction is cancelled. A full step is restarted from its progress file instead. |
-| A restarted agent had never written its progress file, and spent **80 minutes** re-reading the tree. | Before a restart, the stopped step gets one extra turn in its own cached session, whose only job is to write the file. |
-| The provider dropped a request and returned an empty stream. styre reported "no state file written", and **two days** went into reading the agent's contract. | An all-zero usage block stops the phase with "the model returned an empty response". |
-| A design told the agent to skip a test on non-macOS; it did, and the test guard rejected the phase. | `styre check` flags a design that asks for a skip marker before the run starts. |
-| A phase named a new library with no example, so every step spent ~12 `python -c` calls learning its API; **80% of the phase's output was thinking**. | `styre check` flags a new dependency with no code snippet; [`skill/writing-designs.md`](https://github.com/woutersm/styre/blob/main/skill/writing-designs.md) says what a phase must hand over. |
-
-[`CLAUDE.md`](https://github.com/woutersm/styre/blob/main/CLAUDE.md) is the full design record:
-how it works, what was measured, and which decisions are settled.
-
-[`evals/`](https://github.com/woutersm/styre/tree/main/evals) checks the interfaces against
-the model and the history: whether the builder keeps the contract its tools and docs set
-out, and whether `styre check`'s warnings predict the phases that go badly. On a local 27B
-model the builder kept the contract in 30 of 30 trials, including finishing BLOCKED instead
-of faking a gate that could not pass.
+[`evals/`](https://github.com/woutersm/styre/tree/main/evals) tests these interfaces against a
+real model and against run history. The first eval checks whether the builder keeps the
+contract its tools and instructions describe. On a local 27B model it did in 30 of 30 trials.
+In one scenario the gate could not pass honestly, and the agent finished BLOCKED in every trial
+instead of faking a pass. The second eval scores `styre check`'s warnings against the phases
+that went badly in one real project.
 
 ## Requirements
 
-- Python 3.9+ (stdlib only, no dependencies)
+- Python 3.9 or later, standard library only
 - git, and a target repository with a clean working tree
 - [pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) on `PATH`, with a model it can use
-- Node.js (pi needs it anyway)
+- Node.js, which pi needs anyway
 
 ## Install
 
@@ -84,14 +83,14 @@ uv tool install git+https://github.com/woutersm/styre
 # or: pipx install git+https://github.com/woutersm/styre
 ```
 
-## Give pi a config of its own
+## Give pi its own config
 
 styre runs pi with `PI_CODING_AGENT_DIR=~/.config/pi/styre` and refuses to start without it.
-An unattended run should not inherit your interactive setup: on one machine the operator's
-extensions and personal `AGENTS.md` were 47% of every request.
+An unattended run should not inherit your interactive setup. On my machine, my own extensions
+and personal `AGENTS.md` were 47% of every request.
 
-It needs two files. `models.json` names your model host and model; this one is a local
-OpenAI-compatible server:
+The directory needs two files. `models.json` names the model host and the model. This one
+points at a local OpenAI-compatible server:
 
 ```json
 {
@@ -108,7 +107,7 @@ OpenAI-compatible server:
 }
 ```
 
-`settings.json` pins that model, and installs no packages:
+`settings.json` selects that model and installs no packages:
 
 ```json
 { "defaultProvider": "local", "defaultModel": "my-model", "packages": [] }
@@ -118,33 +117,35 @@ OpenAI-compatible server:
 mkdir -p ~/.config/pi/styre      # then write the two files above into it
 ```
 
-A hosted provider works the same way: copy `models.json` and `auth.json` from your own pi
-config (`~/.pi/agent/` by default) and pin the model in `settings.json`. Keep the directory
-lean: no `AGENTS.md`, no extensions. `contextWindow` matters: styre restarts a phase in a
-fresh process at 75% of it, and without it that restart is off. `styre run` refuses to
-start without `models.json`.
+For a hosted provider, copy `models.json` and `auth.json` from your own pi config, which is
+`~/.pi/agent/` by default, and select the model in `settings.json`. Leave out `AGENTS.md` and
+extensions. Set `contextWindow`. styre moves a step to a fresh process at 75% of it, and
+without it styre never does.
 
 ## Quick start
 
-From the **root** of the repository you want built:
+Write the design with Claude Code by typing `/styre-design` in the repository you want built
+(see [Using it with Claude Code](#using-it-with-claude-code)), or write it by hand in the
+format below. Then, from the root of that repository:
 
 ```sh
 styre check docs/my-design.md    # validate; print phases, gates, prompt sizes and warnings
 styre run docs/my-design.md      # run every phase, one commit each
 ```
 
-Afterwards:
+After the run:
 
 ```sh
-styre summarize                  # what happened: per phase time, context, fix rounds, where to look
+styre summarize                  # per phase: time, context, fix rounds, what to look at
 git log --oneline styre/my-design
 ```
 
-A stopped run resumes with `styre run docs/my-design.md --from-phase N`.
+To resume a stopped run, use `styre run docs/my-design.md --from-phase N`.
 
 ## The design file
 
-Any preamble, then one block per phase:
+A design starts with an optional preamble that every phase sees, such as the project's
+goal and conventions. Then comes one section per phase, in this shape:
 
 ````markdown
 ## Phase 1: The data and the API
@@ -161,84 +162,94 @@ uv run pytest -q
 ```
 ````
 
-A phase with no criteria list or no gate block is an error. Each phase's prompt carries the
-preamble, the list of phase titles, and **only its own section**. Earlier phases reach it
-through the working tree and a short note the previous phase leaves behind.
+A phase without a criteria list or a gate block is an error. Each phase's prompt holds the
+preamble, the list of phase titles and only that phase's section. The agent learns about
+earlier phases from the working tree and from a short note the previous phase leaves.
 
-How to cut a design so it runs well (size a phase by its work, keep each gate green on its
-own phase's work, give a new library's API in the phase that uses it) is in
-[`skill/writing-designs.md`](https://github.com/woutersm/styre/blob/main/skill/writing-designs.md). [`example-design.md`](https://github.com/woutersm/styre/blob/main/example-design.md) is a small
-two-phase example.
+[`skills/styre/writing-designs.md`](https://github.com/woutersm/styre/blob/main/skill/writing-designs.md)
+explains how to cut a design so a local model can finish it. It covers how big a phase should
+be, how to keep each gate passing on its own phase's work, and where to show the API of a new
+library. [`example-design.md`](https://github.com/woutersm/styre/blob/main/example-design.md) is
+a small two-phase example.
 
-## What a phase goes through
+## What happens in a phase
 
-1. styre writes its rules into the target repo's `AGENTS.md`, between
-   `<!-- styre:begin -->` markers. Your own text in that file is kept.
-2. A fresh pi process gets the phase's prompt. The agent works in the repo and has three
-   tools of styre's:
+1. styre writes its rules into the target repository's `AGENTS.md`, between
+   `<!-- styre:begin -->` markers. It keeps your own text in that file.
+2. A fresh pi process gets the phase's prompt. The agent works in the repository and has three
+   styre tools:
    - `styre_gate` runs the phase's gate and returns what failed
-   - `styre_progress` keeps a progress file a restarted process can continue from
-   - `styre_finish` records DONE or BLOCKED; it refuses DONE until the gate is green
+   - `styre_progress` keeps a progress file that a fresh process can continue from
+   - `styre_finish` records DONE or BLOCKED, and refuses DONE until the gate passes
 3. When the agent's context passes 75% of the model's window, styre stops it between two turns
    and continues in a fresh process from the progress file.
-4. styre runs every gate command itself and checks the staged diff for new skip/xfail markers
-   or removed tests.
-5. On a failure, the agent gets a fix round with the whole failure, up to `--retries` (default 2).
-6. All green: one commit, titled after the phase. Otherwise the run stops and leaves the work
-   uncommitted.
+4. styre runs every gate command itself and checks the staged diff for new skip or xfail
+   markers and for removed tests.
+5. On a failure, the agent gets a fix round with the whole failure, up to `--retries` times.
+   The default is 2.
+6. If everything passes, styre makes one commit titled after the phase. Otherwise the run stops
+   and leaves the work uncommitted.
 
 ## What it writes into your repository
 
 | What | Where |
 | --- | --- |
-| A branch | `styre/<design name>` (`--branch` to choose) |
+| A branch | `styre/<design name>`, or the one `--branch` names |
 | One commit per phase | on that branch |
 | The rules block | `AGENTS.md`, between styre's markers |
-| The agent's decision log | `docs/decisions.md`, append-only, committed; no later phase reads it |
-| Run records | `.styre/runs/<id>/`: prompts, logs, pi's event stream, `timeline.jsonl`, `summary.md` |
+| The agent's decision log | `docs/decisions.md`, append-only and committed. No later phase reads it. |
+| Run records | `.styre/runs/<id>/`, with prompts, logs, pi's event stream, `timeline.jsonl` and `summary.md` |
 
-`.styre/` and common caches are added to `.git/info/exclude`, so nothing of styre's is
-committed except `AGENTS.md` and the agent's own work.
+styre adds `.styre/` and common caches to `.git/info/exclude`. The only file of its own that it
+commits is `AGENTS.md`.
 
 ## Commands
 
-| Command | |
+| Command | What it does |
 | --- | --- |
-| `styre check <design>` | Validate, print each phase's gate and prompt size, and warn about shapes that fail |
-| `styre run <design>` | Run it. `--from-phase N` resumes, `--retries`, `--timeout` (seconds of *silence*, default 7200), `--gate-timeout`, `--branch`, `--quiet`; `--help` for all |
-| `styre summarize [run]` | The report for the latest run, or a named one |
+| `styre check <design>` | Validates the design, prints each phase's gate and prompt size, and warns about designs that tend to fail |
+| `styre run <design>` | Runs it. Options include `--from-phase N` to resume, `--retries`, `--timeout` in seconds of silence with a default of 7200, `--gate-timeout`, `--branch` and `--quiet`. `--help` lists them all. |
+| `styre summarize [run]` | Prints the report for the latest run, or for the one named |
 
-## Directing it
+## Using it with Claude Code
 
-styre makes no judgement calls: it runs, gates and commits. Writing the design, deciding what
-a stopped phase needs, and reviewing the result are for whoever directs the run: a person, or
-a person with an interactive assistant. [`skill/DIRECTOR.md`](https://github.com/woutersm/styre/blob/main/skill/DIRECTOR.md)
-is five rules for that; [`skill/writing-designs.md`](https://github.com/woutersm/styre/blob/main/skill/writing-designs.md)
-is how to shape a design so a local model can finish it.
+styre makes no judgement calls. It runs phases, runs gates and commits. The person directing
+the run, alone or with an interactive assistant, writes the design, decides what a stopped
+phase needs and reviews the result.
+[`skills/styre/DIRECTOR.md`](https://github.com/woutersm/styre/blob/main/skill/DIRECTOR.md) gives five
+rules for that work.
 
-To use [`skill/`](https://github.com/woutersm/styre/tree/main/skill) as a [Claude Code](https://claude.com/claude-code)
-skill, link it in once and `/styre` works in every repository:
+[`skills/`](https://github.com/woutersm/styre/tree/main/skills) holds two
+[Claude Code](https://claude.com/claude-code) skills:
+
+- `/styre-design` writes a design with you. It asks what you want built, reads the
+  repository, proposes the phases, writes `docs/<name>-design.md` and runs `styre check` on it.
+- `/styre` runs the whole loop: design, run, read a stop, resume, and review the result.
+
+Link them once, from a clone of this repository, and both work in every repository:
 
 ```sh
-ln -s "$(pwd)/skill" ~/.claude/skills/styre    # from a clone of this repository
+ln -s "$(pwd)"/skills/* ~/.claude/skills/
 ```
 
 ## Safety
 
-pi has no sandbox and runs commands without asking. Run it in an ordinary clone of
-the target repository, with only the credentials the job needs. styre bounds time (an idle
-timeout per step, a timeout per gate command) but not spend: set a limit with your model
-provider.
+pi has no sandbox and runs commands without asking. Run it in an ordinary clone of the target
+repository, with only the credentials the job needs. styre limits time, with an idle timeout
+per step and a timeout per gate command. It does not limit spending, so set a limit with your
+model provider.
 
 ## Development
 
 ```sh
-uv run --with pytest python -m pytest -q     # the suite; the end-to-end tests drive a fake pi
+uv run --with pytest python -m pytest -q     # the suite; the end-to-end tests use a fake pi
 uvx ruff check .
 ```
 
-`tests/fake_pi.py` stands in for pi, so the whole loop runs without a model. [`CLAUDE.md`](https://github.com/woutersm/styre/blob/main/CLAUDE.md) is the design record: how it works, what was
-measured, and which decisions are settled. [`TODO.md`](https://github.com/woutersm/styre/blob/main/TODO.md) is what is open.
+`tests/fake_pi.py` stands in for pi, so the whole loop runs without a model.
+[`CLAUDE.md`](https://github.com/woutersm/styre/blob/main/CLAUDE.md) records the design: how it
+works, what was measured, and which decisions are settled.
+[`TODO.md`](https://github.com/woutersm/styre/blob/main/TODO.md) lists what is open.
 
 ## License
 
