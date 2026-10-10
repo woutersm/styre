@@ -350,9 +350,9 @@ def main():
             failed = [k for k, ok in checks.items() if not ok]
             print(f"{sc.name} {r}/{args.reps}: {'pass' if not failed else 'FAIL ' + ', '.join(failed)}"
                   f"  ({facts['minutes']} min)", flush=True)
-            (base / "facts.jsonl").open("a", encoding="utf-8").write(json.dumps(
-                {"scenario": sc.name, "trial": r, "checks": checks,
-                 **facts}) + "\n")
+            with (base / "facts.jsonl").open("a", encoding="utf-8") as f:
+                f.write(json.dumps({"scenario": sc.name, "trial": r, "checks": checks,
+                                    **facts}) + "\n")
     text = report(results, args.reps, stamp)
     (base / "report.md").write_text(text, encoding="utf-8")
     print("\n" + text)

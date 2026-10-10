@@ -17,7 +17,6 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from styre.config import WORK
 from styre.process import RELAY_RC
 from styre.state import read_state
 
@@ -313,7 +312,7 @@ def collect(run):
     summary.phases.sort(key=lambda p: p.n)
     for phase in summary.phases:
         if run.progress(phase.n).is_file():
-            phase.progress = f"{WORK.as_posix()}/runs/{run.id}/{run.progress(phase.n).name}"
+            phase.progress = run.progress(phase.n).as_posix()
         if run.events(phase.n).exists():
             read_phase_events(run, phase)
         else:

@@ -301,5 +301,6 @@ def test_a_stopped_phase_names_its_last_progress_file(tmp_path):
     for n in (1, 2):
         run.progress(n).write_text("Done: x\nNow: y\nNext: z\nLearned: w\n", encoding="utf-8")
     text = render(collect(run))
-    assert f"`.styre/runs/{run.id}/phase2.progress.md`" in text
+    # The run's real directory, not `.styre/runs/<id>`: summarize also takes a path.
+    assert f"`{run.progress(2).as_posix()}`" in text
     assert "phase1.progress.md" not in text

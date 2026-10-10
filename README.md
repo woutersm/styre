@@ -166,7 +166,7 @@ A phase without a criteria list or a gate block is an error. Each phase's prompt
 preamble, the list of phase titles and only that phase's section. The agent learns about
 earlier phases from the working tree and from a short note the previous phase leaves.
 
-[`skills/styre/writing-designs.md`](https://github.com/woutersm/styre/blob/main/skill/writing-designs.md)
+[`skills/styre/writing-designs.md`](https://github.com/woutersm/styre/blob/main/skills/styre/writing-designs.md)
 explains how to cut a design so a local model can finish it. It covers how big a phase should
 be, how to keep each gate passing on its own phase's work, and where to show the API of a new
 library. [`example-design.md`](https://github.com/woutersm/styre/blob/main/example-design.md) is
@@ -217,7 +217,7 @@ commits is `AGENTS.md`.
 styre makes no judgement calls. It runs phases, runs gates and commits. The person directing
 the run, alone or with an interactive assistant, writes the design, decides what a stopped
 phase needs and reviews the result.
-[`skills/styre/DIRECTOR.md`](https://github.com/woutersm/styre/blob/main/skill/DIRECTOR.md) gives five
+[`skills/styre/DIRECTOR.md`](https://github.com/woutersm/styre/blob/main/skills/styre/DIRECTOR.md) gives five
 rules for that work.
 
 [`skills/`](https://github.com/woutersm/styre/tree/main/skills) holds two

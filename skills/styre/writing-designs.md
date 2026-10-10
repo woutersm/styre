@@ -181,9 +181,9 @@ attempt with **six self-fix rounds** inside it: the agent found and fixed six th
 criteria stated less plainly than the gate enforced. That gap is invisible in the commit and
 is the clearest signal that a criterion needs rewriting before the next run.
 
-Also, from `styre check`'s advisories: keep criteria to **8 or fewer**, make each one an
-observable fact, and never ask for a skipped or xfailed test — the guard rejects the marker
-and the phase fails for doing what the design said.
+Also: keep criteria to **8 or fewer** and make each one an observable fact. Never ask for a
+skipped or xfailed test — `styre check` warns about it, the guard rejects the marker, and the
+phase fails for doing what the design said.
 
 ## Run any DDL or command the design hands over, once, before shipping it
 
