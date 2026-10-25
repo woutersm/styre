@@ -32,3 +32,18 @@
 - The CLI's `--compare` path resolves each run with `rundir.resolve` (so a directory path
   works), prints, and writes no `summary.md`: a comparison is a check, and writing it into
   either run would fake a second summary that no single run produced.
+
+## Phase 3: Scoring a reference suite from junit XML
+
+- `evals/bench.py` provides `read_junit(path)` and `score(cases, keep_glob, expected_new,
+  expected_keep)`, plus a small `main()` that scores one or more XML files from the command
+  line (`--keep-glob`, `--expected-new`, `--expected-keep`); a later phase adds the run
+  runner. stdlib only (`fnmatch`, `xml.etree`).
+- `read_junit` returns `[]` for a missing file (`OSError`) or one that fails to parse
+  (`ET.ParseError`), so a crashed part or a bad file simply scores as absent tests.
+- The keep/new split is decided by matching the testcase **classname** (not the full id)
+  against `"*" + keep_glob`, so it works for both pytest module paths
+  (`test_keep_*`) and vitest file paths (`*.keep.test.*`).
+- A test that never ran counts as failed only through `total = max(expected, seen)`;
+  `failing`/`regressions` list only the ids that were actually seen and did not pass, and
+  `missing` counts expected-not-seen tests across both kinds.
