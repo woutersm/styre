@@ -1,7 +1,7 @@
 """Run one benchmark design from start to score, and score its reference test suite.
 
     python evals/bench.py <design-dir> [--variant brief|full] [--styre CMD] [--pi-config DIR]
-                          [--label TEXT] [--out DIR]
+                          [--label TEXT] [--out DIR] [--cap-hours H]
 
 `<design-dir>` holds `bench.json` (the design, the reference suite, the checked counts), the
 design files and the reference suite. `read_junit` and `score` read the junit XML the design's
@@ -16,6 +16,7 @@ import json
 import os
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -29,6 +30,7 @@ from styre.config import EXCLUDES  # noqa: E402
 
 DEFAULT_OUT_NAME = "results"
 REF_TIMEOUT = 900   # seconds allowed per reference-suite part
+CAP_HOURS = 3.0     # a design's styre run is stopped here and scored on what it committed
 
 
 def pi_config_dir(explicit=None):
@@ -211,13 +213,58 @@ def do_setup(design, repo, setup_log):
     return None
 
 
-def do_run(design, repo, styre_cmd, config_dir, styre_log):
-    """Run `<styre> run <design_path>` in the copy. Return (exit_code, hours)."""
+def process_groups(pid):
+    """The process groups of `pid` and all its descendants. styre starts pi and each gate in a
+    session of its own, so killing styre's group alone would leave pi running."""
+    out = subprocess.run(["ps", "-A", "-o", "pid=,ppid=,pgid="], capture_output=True,
+                         text=True).stdout
+    rows = [tuple(int(x) for x in line.split()) for line in out.splitlines()
+            if len(line.split()) == 3]
+    tree, todo = {pid}, [pid]
+    while todo:
+        parent = todo.pop()
+        for child, ppid, _ in rows:
+            if ppid == parent and child not in tree:
+                tree.add(child)
+                todo.append(child)
+    return {pgid for p, _, pgid in rows if p in tree} - {os.getpgrp()}
+
+
+def kill_tree(pid, grace=5):
+    """SIGTERM every process group under `pid`, then SIGKILL what is left after `grace` s."""
+    groups = process_groups(pid)
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        for gid in groups:
+            try:
+                os.killpg(gid, sig)
+            except (ProcessLookupError, PermissionError):
+                pass
+        if sig == signal.SIGTERM:
+            time.sleep(grace)
+
+
+def do_run(design, repo, styre_cmd, config_dir, styre_log, cap_hours=CAP_HOURS):
+    """Run `<styre> run <design_path>` in the copy, at most `cap_hours`.
+
+    Returns (exit_code, hours, capped). A run past the cap is killed, styre, pi and gates
+    together; its exit code is None and only what it committed is scored."""
     env = {**os.environ, "STYRE_PI_CONFIG_DIR": str(config_dir), "NO_COLOR": "1"}
+    cmd = shlex.split(styre_cmd) + ["run", design["design_path"]]
+    styre_log.parent.mkdir(parents=True, exist_ok=True)
     started = time.time()
-    rc, _ = run(shlex.split(styre_cmd) + ["run", design["design_path"]], cwd=repo, env=env,
-                log=styre_log)
-    return rc, round((time.time() - started) / 3600, 2)
+    with open(styre_log, "a", encoding="utf-8") as log:
+        log.write(f"$ {' '.join(cmd)}\n")
+        log.flush()
+        p = subprocess.Popen(cmd, cwd=str(repo), env=env, stdin=subprocess.DEVNULL,
+                             stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+        try:
+            rc, capped = p.wait(timeout=cap_hours * 3600), False
+        except subprocess.TimeoutExpired:
+            kill_tree(p.pid)
+            p.wait()
+            rc, capped = None, True
+            log.write(f"\n[bench] stopped at the {cap_hours:g} h cap\n")
+    return rc, round((time.time() - started) / 3600, 2), capped
 
 
 def read_run(summary, run_root):
@@ -277,7 +324,8 @@ def usage_of(summary):
     return usage
 
 
-def run_bench(design_dir, variant, styre_cmd, out, pi_config=None, label=None):
+def run_bench(design_dir, variant, styre_cmd, out, pi_config=None, label=None,
+              cap_hours=CAP_HOURS):
     """Run one benchmark design end to end and write `result.json`. Returns the result dict.
 
     `pi_config` (the pi config directory the run uses) and `label` (free text for what the
@@ -308,7 +356,8 @@ def run_bench(design_dir, variant, styre_cmd, out, pi_config=None, label=None):
         "model": read_model(config_dir), "served": None,
         "start": design.get("start"), "started": datetime.now().astimezone().isoformat(),
         "hours": None, "exit_code": None, "run_id": None, "phases": design.get("phases"),
-        "committed": None, "stopped": None, "error": None,
+        "committed": None, "stopped": None, "error": None, "cap_hours": cap_hours,
+        "capped": False,
         "new": None, "keep": None, "failing": None, "regressions": None, "missing": None,
         "parts": None, "usage": None,
     }
@@ -318,13 +367,16 @@ def run_bench(design_dir, variant, styre_cmd, out, pi_config=None, label=None):
         result["error"] = do_setup(design, repo, setup_log)
         if result["error"] is None:
             result["styre"] = styre_version(styre_cmd, repo)
-            rc, hours = do_run(design, repo, styre_cmd, config_dir, styre_log)
-            result["exit_code"], result["hours"] = rc, hours
+            rc, hours, capped = do_run(design, repo, styre_cmd, config_dir, styre_log,
+                                       cap_hours)
+            result["exit_code"], result["hours"], result["capped"] = rc, hours, capped
             result["run_id"] = (repo / ".styre" / "latest.txt").read_text(encoding="utf-8").strip()
             run_id = result["run_id"]
             run_root = repo / ".styre" / "runs" / run_id
             summary = collect(RunDir(run_root))
             committed, stopped, served = read_run(summary, run_root)
+            if capped:
+                stopped = f"stopped at the {cap_hours:g} h cap"
             result["committed"], result["stopped"], result["served"] = committed, stopped, served
             result["usage"] = usage_of(summary)
             # Only committed work is scored: reset to the start, which removes untracked files
@@ -358,10 +410,12 @@ def main(argv=None):
     ap.add_argument("--label", default=None, help="free text for what the config cannot show")
     ap.add_argument("--out", default=None,
                     help="results root (default <design-dir>/../results)")
+    ap.add_argument("--cap-hours", type=float, default=CAP_HOURS,
+                    help=f"stop the styre run after this many hours (default {CAP_HOURS:g})")
     args = ap.parse_args(sys.argv[1:] if argv is None else list(argv))
     out = args.out or str(Path(args.design_dir).resolve().parent / DEFAULT_OUT_NAME)
     result = run_bench(args.design_dir, args.variant, args.styre, out,
-                       pi_config=args.pi_config, label=args.label)
+                       pi_config=args.pi_config, label=args.label, cap_hours=args.cap_hours)
     new, keep = result["new"] or [None, None], result["keep"] or [None, None]
     print(f"{result['design']} {result['variant']}: new {new[0]}/{new[1]}, "
           f"keep {keep[0]}/{keep[1]}, {result['committed']}/{result['phases']} phases "

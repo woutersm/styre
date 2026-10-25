@@ -8,6 +8,7 @@ import json
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -442,3 +443,41 @@ def test_report_groups_by_setup_name(tmp_path):
     assert len(re.findall(r"\| Design +\| Started", text)) == 2
     assert "## styre 0.25.0, brief, splash-4bit, splash/" in text
     assert "## styre 0.25.0, brief, omlx072-dflash2-4bit, splash/" in text
+
+
+def test_the_cap_kills_styre_and_the_sessions_it_started(tmp_path):
+    """A stand-in for styre that starts a child in a session of its own, as styre starts pi,
+    and never ends: the cap stops both."""
+    import os
+    pidfile = tmp_path / "child.pid"
+    fake = tmp_path / "fake_styre.py"
+    fake.write_text(
+        "import subprocess, sys, time\n"
+        "c = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(600)'],\n"
+        "                     start_new_session=True)\n"
+        f"open({str(pidfile)!r}, 'w').write(str(c.pid))\n"
+        "time.sleep(600)\n", encoding="utf-8")
+    rc, hours, capped = bench.do_run({"design_path": "d.md"}, tmp_path,
+                                     f"{sys.executable} {fake}", tmp_path, tmp_path / "s.log",
+                                     cap_hours=3 / 3600)
+    assert (rc, capped) == (None, True)
+    assert hours < 0.01
+    child = int(pidfile.read_text())
+    time.sleep(0.2)
+    try:
+        os.kill(child, 0)
+        alive = True
+    except ProcessLookupError:
+        alive = False
+    if alive:  # a zombie is gone in all but name: check its state
+        state = subprocess.run(["ps", "-o", "stat=", "-p", str(child)],
+                               capture_output=True, text=True).stdout.strip()
+        alive = bool(state) and not state.startswith("Z")
+    assert not alive
+    assert "[bench] stopped at the" in (tmp_path / "s.log").read_text()
+
+
+def test_a_run_inside_the_cap_is_not_capped(tmp_path):
+    rc, _, capped = bench.do_run({"design_path": "d.md"}, tmp_path,
+                                 f"{sys.executable} -c pass", tmp_path, tmp_path / "s.log")
+    assert (rc, capped) == (0, False)

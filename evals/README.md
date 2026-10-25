@@ -68,7 +68,8 @@ A warning that scores *badly* even in-sample is the useful signal.
 design's start commit into a history-less copy, puts the design in, runs `styre run`,
 resets the tree to the committed work, runs the design's reference test suite, and records
 one `result.json` per setup — the score, the run's usage and the model it actually called.
-It calls the model, so a run takes as long as the design takes.
+It calls the model; a run is stopped at `--cap-hours` (3 by default), styre, pi and gates together, and
+scored on what it committed, with `capped: true` in its result.
 
 ```sh
 python evals/bench.py path/to/design-dir --variant brief --label "splash 0.4" --out results
