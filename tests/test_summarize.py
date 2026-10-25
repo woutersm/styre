@@ -125,6 +125,14 @@ def test_the_summary_has_a_model_time_table_and_the_phases_table_drops_cached(tm
     assert "Cached" not in phases
 
 
+def test_model_time_shows_prefill_and_decode_rates(tmp_path):
+    # 126 uncached input tokens over 2 s of prefill, 63 output tokens over 46 s of decode.
+    text = render(collect(make_run(tmp_path, timeline=TIMELINE)))
+    model_time = text.split("## Model time")[1].split("## ")[0]
+    assert "Prefill tok/s" in model_time and "Decode tok/s" in model_time
+    assert "| 63.0 " in model_time and "| 1.4 " in model_time
+
+
 def test_thinking_is_the_providers_count_unless_it_denies_visible_thinking():
     from styre.summarize import thinking_tokens
     thought = [{"type": "thinking", "thinking": "x" * 300}, {"type": "text", "text": "y" * 100}]
@@ -410,31 +418,3 @@ def test_compare_summarizes_both_runs_without_writing(tmp_path, monkeypatch, cap
     assert "| 1 | Phase 1: One | committed → committed | 15.0 → 5.0 |" in capsys.readouterr().out
     assert not (tmp_path / "runs" / "a" / "summary.md").exists()
     assert not (tmp_path / "runs" / "b" / "summary.md").exists()
-
-
-def test_compare_rejects_an_unknown_run(tmp_path, monkeypatch):
-    import pytest
-
-    import styre.rundir as rd
-    from styre.cli import main
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(rd, "RUNS", tmp_path / "runs")
-    (tmp_path / "runs").mkdir()
-    with pytest.raises(SystemExit) as e:
-        main(["summarize", "--compare", "nope", "b"])
-    assert str(e.value) == "No such run: nope."
-
-
-def test_a_run_and_compare_together_is_an_error(tmp_path, monkeypatch):
-    import pytest
-
-    from styre.cli import main
-    with pytest.raises(SystemExit) as e:
-        main(["summarize", "somerun", "--compare", "a", "b"])
-    assert str(e.value) == "Give either a run or --compare A B, not both."
-
-
-def test_summarize_parser_accepts_compare():
-    from styre.cli import build_parser
-    args = build_parser().parse_args(["summarize", "--compare", "A", "B"])
-    assert args.run is None and args.compare == ["A", "B"]

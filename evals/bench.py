@@ -109,6 +109,11 @@ def run(args, cwd, shell=False, env=None, timeout=None, log=None, check=False):
                            errors="replace")
     except FileNotFoundError as e:
         text, rc = f"command not found: {e}", 127
+    except subprocess.TimeoutExpired as e:
+        out = e.output or ""
+        if isinstance(out, bytes):
+            out = out.decode("utf-8", "replace")
+        text, rc = f"{out}\ntimed out after {timeout} s\n", 124
     else:
         text, rc = (p.stdout or ""), p.returncode
     label = " ".join(map(str, cmd))

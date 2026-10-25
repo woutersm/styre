@@ -17,10 +17,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from styre.summarize import count, table  # noqa: E402
+from styre.summarize import count, rate_cell, table  # noqa: E402
 
 HEADER = ["Design", "Started", "New", "Keep", "Phases", "Hours",
-          "Uncached in", "Cached in", "Cache hit", "Output", "Prefill h", "Decode h"]
+          "Uncached in", "Cached in", "Cache hit", "Output", "Prefill h", "Decode h",
+          "Prefill tok/s", "Decode tok/s"]
 
 
 def load_result(path):
@@ -63,6 +64,11 @@ def config_key(result):
             m.get("context_window"), m.get("thinking"), result.get("label"))
 
 
+def sort_key(key):
+    """A configuration key that sorts even when some of its fields are None."""
+    return tuple("" if v is None else str(v) for v in key)
+
+
 def config_name(key):
     """The heading for a configuration, leaving out what is null, such as
     `styre 0.25.0, brief, splash/mlx-community/Qwen3.8-27B-4bit, 120,000 ctx, splash 0.4`."""
@@ -78,7 +84,7 @@ def config_name(key):
         parts.append(f"{count(ctx)} ctx")
     if label:
         parts.append(label)
-    return ", ".join(parts)
+    return ", ".join(parts) or "unknown configuration"
 
 
 def served_line(result):
@@ -141,7 +147,17 @@ def result_row(result):
     row += token_cells(u)
     row += [seconds_cell(u.get("prefill_seconds") if u else None),
             seconds_cell(u.get("decode_seconds") if u else None)]
+    row += rate_cells([u])
     return row
+
+
+def rate_cells(usage_list):
+    """Prefill and decode tok/s over the summed usage blocks."""
+    usage_list = [u for u in usage_list if u]
+    total = {k: sum(u.get(k) or 0 for u in usage_list)
+             for k in ("input", "output", "prefill_seconds", "decode_seconds")}
+    return [rate_cell(total["input"], total["prefill_seconds"]),
+            rate_cell(total["output"], total["decode_seconds"])]
 
 
 def sum_token_cells(usage_list):
@@ -179,6 +195,7 @@ def total_row(results):
     row += sum_token_cells(usages)
     row += [sum_seconds_cell([u.get("prefill_seconds") if u else None for u in usages]),
             sum_seconds_cell([u.get("decode_seconds") if u else None for u in usages])]
+    row += rate_cells(usages)
     return row
 
 
@@ -251,7 +268,7 @@ def render(paths):
     for path, result in results:
         groups.setdefault(config_key(result), []).append((path, result))
     lines = ["# Benchmark report", ""]
-    for key in sorted(k for k in groups if any(p is not None for p in k)):
+    for key in sorted(groups, key=sort_key):
         group = sorted(groups[key], key=lambda pr: (pr[1].get("design") or "",
                                                     pr[1].get("started") or ""))
         lines += [f"## {config_name(key)}", ""]
@@ -268,7 +285,7 @@ def render(paths):
         if spread:
             lines += ["Spread:"] + spread + [""]
     if len(groups) > 1:
-        lines += config_table([(k, groups[k]) for k in sorted(groups)])
+        lines += config_table([(k, groups[k]) for k in sorted(groups, key=sort_key)])
     while lines and lines[-1] == "":
         lines.pop()
     return "\n".join(lines) + "\n"

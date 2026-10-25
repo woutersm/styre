@@ -396,6 +396,11 @@ def count(n):
     return "n/a" if n is None else f"{n:,}"
 
 
+def rate_cell(tokens, seconds):
+    """Tokens per second to one decimal, or `-` when no time was measured."""
+    return f"{tokens / seconds:.1f}" if tokens and seconds else "-"
+
+
 def thinking_cell(usage):
     """Thinking tokens with their share of the output: on a local model it is most of it."""
     if usage.reasoning is None:
@@ -503,7 +508,8 @@ def model_time_table(summary):
         u = p.usage
         rows.append([p.n, p.name, count(u.requests), count(u.input), count(u.cache_read),
                      cache_hit_cell(u), count(u.output),
-                     minutes(u.prefill_seconds, u.timed), minutes(u.decode_seconds, u.timed)])
+                     minutes(u.prefill_seconds, u.timed), minutes(u.decode_seconds, u.timed),
+                     rate_cell(u.input, u.prefill_seconds), rate_cell(u.output, u.decode_seconds)])
     total = Usage()
     for p in summary.phases:
         u = p.usage
@@ -517,16 +523,22 @@ def model_time_table(summary):
     rows.append(["", "total", count(total.requests), count(total.input), count(total.cache_read),
                  cache_hit_cell(total), count(total.output),
                  minutes(total.prefill_seconds, total.timed),
-                 minutes(total.decode_seconds, total.timed)])
+                 minutes(total.decode_seconds, total.timed),
+                 rate_cell(total.input, total.prefill_seconds),
+                 rate_cell(total.output, total.decode_seconds)])
     return ["## Model time", "",
             table(["#", "Phase", "Requests", "Uncached in", "Cached in", "Cache hit",
-                   "Output", "Prefill min", "Decode min"], rows),
+                   "Output", "Prefill min", "Decode min", "Prefill tok/s", "Decode tok/s"],
+                  rows),
             "",
             "Uncached in and Cached in are the prompt tokens the model had to process and "
             "the ones it took from its cache; the hit rate is their ratio, and it "
             "collapsing means the prompt prefix stopped being stable. Prefill runs from a "
             "request's start to its first streamed event, and decode from there to its end, "
-            "both by styre's arrival stamps; a dash means no request was timed."]
+            "both by styre's arrival stamps; a dash means no request was timed. Prefill tok/s "
+            "is uncached input over prefill time, decode tok/s output over decode time: what "
+            "the host managed on this workload, not its peak."]
+
 
 def where_to_look(summary):
     """The part worth reading first: everything that did not go straight through."""

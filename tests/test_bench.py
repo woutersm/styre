@@ -382,3 +382,41 @@ def test_report_directory_reads_one_level(tmp_path):
 
 def test_report_missing_path_fails(tmp_path):
     assert bench_report.main([str(tmp_path / "nope")]) == 1
+
+
+def test_a_reference_part_that_times_out_still_leaves_a_score(monkeypatch, tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    design_dir = tmp_path / "design"
+    for name in ("slow", "fine"):
+        (design_dir / name).mkdir(parents=True)
+    (design_dir / "fine" / "test_ref_fine.py").write_text("def test_ok():\n    pass\n",
+                                                         encoding="utf-8")
+    design = {"reference": {"parts": [
+        {"dir": "slow", "into": "slow", "command": f"{sys.executable} -c \"import time; time.sleep(5)\""},
+        {"dir": "fine", "into": "fine",
+         "command": f"{sys.executable} -m pytest -q -p no:cacheprovider fine --junitxml={{junit}}"},
+    ]}, "checked": {"start": {"new": [0, 1], "keep": [0, 0]}}}
+    monkeypatch.setattr(bench, "REF_TIMEOUT", 1)
+    junit = tmp_path / "junit"
+    junit.mkdir()
+    sc, parts = bench.do_reference(design, design_dir, repo, junit)
+    assert [p["rc"] for p in parts] == [124, 0]
+    assert sc["new"] == [1, 1]
+
+
+def test_report_mixes_null_and_set_fields_across_configurations(tmp_path):
+    a = mk_result(tmp_path, "a", label=None)
+    b = mk_result(tmp_path, "b", label="omlx 0.7.2")
+    c = mk_result(tmp_path, "c", styre=None, variant=None, label=None, model={})
+    text = report(tmp_path, a, b, c)
+    assert len(re.findall(r"\| Design +\| Started", text)) == 3  # no group dropped
+    assert "## unknown configuration" in text
+    assert text.count("## Configurations") == 1
+
+
+def test_report_shows_tok_per_second(tmp_path):
+    # mk_result: 5,378 uncached over 60 s of prefill, 229 output over 3,600 s of decode.
+    text = report(tmp_path, mk_result(tmp_path, "a"))
+    assert re.search(r"\| Prefill tok/s +\| Decode tok/s +\|", text)
+    assert re.search(r"\| 89\.6 +\| 0\.1 +\|", text)
