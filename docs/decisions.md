@@ -69,3 +69,21 @@ implementing the nine design steps, plus a CLI in `main()`.
 - **`result.json` is written on every path, including early failures**; a failed run never reaches
   the keys for the steps it skipped, and they are `null`. The score's keys are merged in by
   `dict.update`, so a run that scored has real values and one that did not has the `null`s.
+
+## Phase 5: The benchmark report
+
+- `evals/bench_report.py` groups results by a tuple of the seven configuration fields (styre
+  version, variant, provider, id, context_window, thinking, label); the `## Configurations`
+  table is only added when at least two groups exist.
+- A result with an `error` renders the error in the `New` cell and dashes for the columns it
+  never reached; it contributes nothing to the total row (which sums only error-free results)
+  but does appear in `Stops:`. `Stops:` lists each set `stopped` and `error` as its own line.
+- `Spread:` prints `- <design>: new <passed[, ...]> of <total>; hours <h1, h2>`; the `of`
+  total is shown only when every result in the group has the same total (the design's wording
+  `new 15, 17 of 17`).
+- PATH resolution is deliberately one level deep: own `result.json`, else each child dir's
+  `result.json`. A child `repo/deep/result.json` is unreachable. `main` returns 1 (with a
+  stderr message) when a PATH names no result.
+- Cell formatting reuses `styre.summarize`'s `count`/`table`; cache hit is
+  `cache_read/(input+cache_read)` at one decimal over summed tokens, matching `summarize`'s
+  `cache_hit_cell`. Prefill/Decode hours are seconds/3600 at one decimal.

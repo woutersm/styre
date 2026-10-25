@@ -61,3 +61,29 @@ project: 102 phases from 19 design versions.
 **Read it as in-sample.** The warnings were written from the same runs they are scored on,
 so a good score here shows a warning describes its own history, not that it generalises.
 A warning that scores *badly* even in-sample is the useful signal.
+
+## `bench.py` and `bench_report.py`: a benchmark design, end to end
+
+`bench.py` runs one benchmark design the way styre would be used for it: it clones the
+design's start commit into a history-less copy, puts the design in, runs `styre run`,
+resets the tree to the committed work, runs the design's reference test suite, and records
+one `result.json` per setup — the score, the run's usage and the model it actually called.
+It calls the model, so a run takes as long as the design takes.
+
+```sh
+python evals/bench.py path/to/design-dir --variant brief --label "splash 0.4" --out results
+```
+
+`bench_report.py` turns the `result.json` files into one markdown report. A path is a
+`result.json`, or a directory (its own `result.json`, else each `*/result.json` one level
+down; it never searches deeper, because result directories hold whole repositories).
+
+```sh
+python evals/bench_report.py results/ results/other-run
+```
+
+Results are grouped by configuration — styre version, variant, model and label — and each
+configuration gets one table of its results, a total row, the `Stops:` of the results that
+stopped or errored, and a `Spread:` of the run-to-run noise per design. With more than one
+configuration a final `## Configurations` table compares them over the same designs. It
+calls no model and touches no git state; it reads `result.json` files only.
