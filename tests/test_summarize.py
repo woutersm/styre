@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from styre.rundir import RunDir
-from styre.summarize import Phase, Usage, collect, read_events, render, summarize
+from styre.summarize import Phase, Usage, collect, read_events, read_stamped_events, render, summarize
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
@@ -66,6 +66,62 @@ def test_real_token_counts_are_read_off_a_capture(tmp_path):
     # reasoning and cache hits are summed. A reported `reasoning` is believed when it is backed.
     usage = collect(make_run(tmp_path)).phases[0].usage
     assert (usage.peak, usage.output, usage.reasoning, usage.cache_read) == (1907, 63, 31, 3584)
+
+
+def test_request_tokens_and_cache_hit_are_read_off_the_capture(tmp_path):
+    # pi_toolcall.jsonl through make_run stamps one second per line: the two assistant
+    # requests are 29 and 97 uncached input tokens (126 total) against 3584 cache hits.
+    usage = collect(make_run(tmp_path)).phases[0].usage
+    assert usage.requests == 2
+    assert (usage.input, usage.cache_read) == (126, 3584)
+    assert usage.cache_hit == 3584 / (126 + 3584)
+
+
+def test_prefill_and_decode_are_measured_off_the_arrival_stamps(tmp_path):
+    # With one second per line, request 1 is start line 8, first update line 9, end line 36:
+    # prefill 1 s, decode 27 s; request 2 is 1 s and 19 s.
+    usage = collect(make_run(tmp_path)).phases[0].usage
+    assert usage.prefill_seconds == 2.0
+    assert usage.decode_seconds == 46.0
+    assert usage.timed == 2
+
+
+def test_a_request_whose_stamps_are_missing_counts_but_adds_no_time(tmp_path):
+    run = make_run(tmp_path)
+    # Strip the arrival stamps: the requests still count, but nothing can be timed.
+    stamped = run.events(1).read_text(encoding="utf-8").splitlines()
+    lines = [json.dumps({k: v for k, v in json.loads(raw).items() if k != "ts"}) for raw in stamped]
+    run.events(1).write_text("".join(raw + "\n" for raw in lines), encoding="utf-8")
+    usage = collect(run).phases[0].usage
+    assert usage.requests == 2       # still counted
+    assert usage.timed == 0         # none timed
+    assert (usage.prefill_seconds, usage.decode_seconds) == (0.0, 0.0)
+
+
+def test_stamped_events_yield_the_timestamp_and_drop_it_in_read_events(tmp_path):
+    path = tmp_path / "e.jsonl"
+    path.write_text('{"ts": "2026-09-20T22:00:00+02:00", "line": "{\\"type\\": \\"agent_end\\"}"}\n' +
+                    '{"line": "{\\"type\\": \\"turn_end\\"}"}\n', encoding="utf-8")
+    stamped = list(read_stamped_events(path))
+    assert stamped[0][0] == datetime(2026, 9, 20, 22, 0, 0).astimezone()
+    assert stamped[1][0] is None                          # missing ts stays None
+    assert [e["type"] for e in read_events(path)] == ["agent_end", "turn_end"]
+
+
+def test_cache_hit_is_none_when_there_were_no_prompt_tokens():
+    u = Usage()
+    u.add({"input": 0, "output": 40, "cacheRead": 0})
+    assert u.cache_hit is None
+
+
+def test_the_summary_has_a_model_time_table_and_the_phases_table_drops_cached(tmp_path):
+    run = make_run(tmp_path, timeline=TIMELINE)
+    text = render(collect(run))
+    model_time = text.split("## Model time")[1].split("## ")[0]
+    assert "## Model time" in text
+    assert "96.6%" in model_time
+    phases = text.split("## Phases")[1].split("## ")[0]
+    assert "Cached" not in phases
 
 
 def test_thinking_is_the_providers_count_unless_it_denies_visible_thinking():

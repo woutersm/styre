@@ -39,12 +39,12 @@ def read_jsonl(path):
                 yield obj
 
 
-def read_events(path):
-    """Yield pi's events from one phase's events file.
+def read_stamped_events(path):
+    """Yield `(ts, event)` pairs from one phase's events file.
 
     Each line is `{"ts": ..., "line": raw}`: our own arrival timestamp wrapped around pi's
-    event. The stamp is not read here — nothing in the summary is timed off the event
-    stream. Durations come from the timeline, which the orchestrator measures itself.
+    event. `ts` is the wrapper's timestamp, parsed with `parse_ts` (None when missing or
+    bad).
     """
     for wrapper in read_jsonl(path):
         raw = wrapper.get("line")
@@ -55,7 +55,18 @@ def read_events(path):
         except json.JSONDecodeError:
             continue  # not an event: text mode, or pi complaining
         if isinstance(event, dict):
-            yield event
+            yield parse_ts(wrapper.get("ts")), event
+
+
+def read_events(path):
+    """Yield pi's events from one phase's events file, dropping the arrival stamp.
+
+    Use `read_stamped_events` instead when a duration is needed: the stamp is the only
+    thing read off the event stream (a request's prefill and decode). Phase durations
+    come from the timeline, which the orchestrator measures itself.
+    """
+    for _ts, event in read_stamped_events(path):
+        yield event
 
 
 def final_usage(path):
@@ -106,15 +117,35 @@ class Usage:
     output: int = 0
     reasoning: int | None = None
     cache_read: int = 0
+    requests: int = 0
+    input: int = 0                 # summed: the uncached part of the prompt
+    prefill_seconds: float = 0.0   # request start to first streamed event, summed
+    decode_seconds: float = 0.0    # first streamed event to request end, summed
+    timed: int = 0                 # requests whose prefill and decode were both measured
 
-    def add(self, usage, content=None):
+    def add(self, usage, content=None, prefill=None, decode=None):
+        """One `message_end`'s usage block. Every call counts one request; `input` is
+        summed like `output`; the timings are added only when both are given."""
+        self.requests += 1
         if usage.get("totalTokens") is not None:
             self.peak = max(self.peak or 0, usage["totalTokens"])   # high-water, not a sum
         self.output += usage.get("output") or 0
+        self.input += usage.get("input") or 0
         self.cache_read += usage.get("cacheRead") or 0   # summed: a hit rate, not a total
+        if prefill is not None and decode is not None:
+            self.prefill_seconds += prefill
+            self.decode_seconds += decode
+            self.timed += 1
         thought = thinking_tokens(usage, content)
         if thought is not None:
             self.reasoning = (self.reasoning or 0) + thought
+
+    @property
+    def cache_hit(self):
+        """The share of prompt tokens the model took from its cache, or None when there
+        were no prompt tokens at all (which is not a 0% hit rate)."""
+        prompt = self.input + self.cache_read
+        return self.cache_read / prompt if prompt else None
 
 
 def thinking_tokens(usage, content=None):
@@ -252,10 +283,36 @@ def read_timeline(run, summary):
 
 
 def read_phase_events(run, phase):
-    """Fold one phase's pi events in: token usage, and tool calls that came back an error."""
-    for e in read_events(run.events(phase.n)):
+    """Fold one phase's pi events in: token usage, and tool calls that came back an error.
+
+    A request is an assistant `message_start`, the `message_update` events it streams and a
+    `message_end` with a usage block — only assistant `message_end`s count, since
+    `turn_end` and other messages can carry the same usage block. Prefill is first update
+    minus start, decode is end minus first update, in seconds, off styre's arrival stamps;
+    either is None when any of the three stamps is missing, and such a request still counts,
+    just untimed.
+    """
+    start_stamp = None
+    first_update_stamp = None
+    for ts, e in read_stamped_events(run.events(phase.n)):
         kind = e.get("type")
-        if kind == "tool_execution_end" and e.get("isError"):
+        if kind == "message_start":
+            if (e.get("message") or {}).get("role") == "assistant":
+                start_stamp = ts
+        elif kind == "message_update" and start_stamp is not None:
+            if first_update_stamp is None:
+                first_update_stamp = ts
+        elif kind == "message_end":
+            message = e.get("message") or {}
+            usage = message.get("usage")
+            if isinstance(usage, dict) and message.get("role") == "assistant":
+                prefill = decode = None
+                if None not in (start_stamp, first_update_stamp, ts):
+                    prefill = (first_update_stamp - start_stamp).total_seconds()
+                    decode = (ts - first_update_stamp).total_seconds()
+                phase.usage.add(usage, message.get("content"), prefill, decode)
+                start_stamp = first_update_stamp = None
+        elif kind == "tool_execution_end" and e.get("isError"):
             phase.tool_errors[e.get("toolName") or "?"] += 1
         elif kind == "tool_execution_end" and e.get("toolName") == "styre_gate":
             text = "".join(c.get("text", "") for c in (e.get("result") or {}).get("content", [])
@@ -271,11 +328,6 @@ def read_phase_events(run, phase):
                 phase.compactions_cancelled += 1
             elif e.get("errorMessage"):
                 phase.compactions_failed.append(e["errorMessage"])
-        elif kind == "message_end":
-            message = e.get("message") or {}
-            usage = message.get("usage")
-            if isinstance(usage, dict):
-                phase.usage.add(usage, message.get("content"))
 
 
 def read_state_files(run, summary):
@@ -403,14 +455,12 @@ def phase_table(summary):
                      minutes(p.gate_seconds, p.gate_runs),
                      "-" if p.rounds is None else p.rounds,
                      "-" if p.self_rounds is None else p.self_rounds,
-                     count(p.usage.peak), count(p.usage.output),
-                     thinking_cell(p.usage), count(p.usage.cache_read)])
+                     count(p.usage.peak), count(p.usage.output), thinking_cell(p.usage)])
     total = Usage()
     for p in summary.phases:
         total.output += p.usage.output
         if p.usage.peak is not None:                 # the run's peak is a max, never a sum
             total.peak = max(total.peak or 0, p.usage.peak)
-        total.cache_read += p.usage.cache_read
         if p.usage.reasoning is not None:
             total.reasoning = (total.reasoning or 0) + p.usage.reasoning
     rows.append(["", "total", "", "",
@@ -420,11 +470,10 @@ def phase_table(summary):
                          any(p.gate_runs for p in summary.phases)),
                  sum(p.rounds or 0 for p in summary.phases),
                  sum(p.self_rounds or 0 for p in summary.phases),
-                 count(total.peak), count(total.output), thinking_cell(total),
-                 count(total.cache_read)])
+                 count(total.peak), count(total.output), thinking_cell(total)])
     return ["## Phases", "",
             table(["#", "Phase", "Status", "Commit", "Agent min", "Gate min", "Fix", "Self",
-                   "Peak ctx", "Output", "Thinking", "Cached"], rows),
+                   "Peak ctx", "Output", "Thinking"], rows),
             "",
             "Peak ctx is the largest context the model held during the phase, and the "
             "total row is the largest of those, not a sum. It is what a phase costs: "
@@ -432,10 +481,49 @@ def phase_table(summary):
             "over. Thinking is the part of output spent reasoning, and its share of the output: "
             "the provider's count, or the thinking blocks' share of the characters where the "
             "provider gives none it can back. `n/a` means neither exists, which is not the "
-            "same as none. Cached "
-            "is the sum of prompt-cache hits: large is good, and it collapsing means the "
-            "prompt prefix stopped being stable."]
+            "same as none."]
 
+
+def model_time_table(summary):
+    """The `## Model time` section: what the model itself spent, per phase and in total.
+
+    Returns the section's lines. `Cache hit` is the share of prompt tokens the model took
+    from its cache (a dash when there were no prompt tokens); the minute columns are `-`
+    when no request was timed.
+    """
+
+    def hit_cell(usage):
+        return "-" if usage.cache_hit is None else f"{usage.cache_hit:.1%}"
+
+    rows = []
+    for p in summary.phases:
+        u = p.usage
+        rows.append([p.n, p.name, count(u.requests), count(u.input), count(u.cache_read),
+                     hit_cell(u), count(u.output),
+                     minutes(u.prefill_seconds, u.timed), minutes(u.decode_seconds, u.timed)])
+    total = Usage()
+    for p in summary.phases:
+        u = p.usage
+        total.requests += u.requests
+        total.input += u.input
+        total.cache_read += u.cache_read
+        total.output += u.output
+        total.prefill_seconds += u.prefill_seconds
+        total.decode_seconds += u.decode_seconds
+        total.timed += u.timed
+    rows.append(["", "total", count(total.requests), count(total.input), count(total.cache_read),
+                 hit_cell(total), count(total.output),
+                 minutes(total.prefill_seconds, total.timed),
+                 minutes(total.decode_seconds, total.timed)])
+    return ["## Model time", "",
+            table(["#", "Phase", "Requests", "Uncached in", "Cached in", "Cache hit",
+                   "Output", "Prefill min", "Decode min"], rows),
+            "",
+            "Uncached in and Cached in are the prompt tokens the model had to process and "
+            "the ones it took from its cache; the hit rate is their ratio, and it "
+            "collapsing means the prompt prefix stopped being stable. Prefill runs from a "
+            "request's start to its first streamed event, and decode from there to its end, "
+            "both by styre's arrival stamps; a dash means no request was timed."]
 
 def where_to_look(summary):
     """The part worth reading first: everything that did not go straight through."""
@@ -489,7 +577,8 @@ def where_to_look(summary):
 
 def render(summary):
     """The whole summary as text. Markdown, but meant to read fine in a terminal."""
-    blocks = [header_lines(summary), phase_table(summary), where_to_look(summary)]
+    blocks = [header_lines(summary), phase_table(summary), model_time_table(summary),
+              where_to_look(summary)]
     return "\n\n".join("\n".join(b).strip("\n") for b in blocks if b).rstrip() + "\n"
 
 
