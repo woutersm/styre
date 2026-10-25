@@ -47,3 +47,25 @@
 - A test that never ran counts as failed only through `total = max(expected, seen)`;
   `failing`/`regressions` list only the ids that were actually seen and did not pass, and
   `missing` counts expected-not-seen tests across both kinds.
+
+## Phase 4: Running one benchmark design
+
+`evals/bench.py` gained `run_bench(design_dir, variant, styre_cmd, out, pi_config=None, label=None)`
+implementing the nine design steps, plus a CLI in `main()`.
+
+- **The pi config directory is resolved at call time, not import time.** `styre.config.PI_CONFIG_DIR`
+  is computed when the module is imported, so reading it would silently pick up the developer's real
+  config in a test that monkeypatches `STYRE_PI_CONFIG_DIR` after import. `pi_config_dir()` therefore
+  re-reads `$STYRE_PI_CONFIG_DIR` each time, falling back to `~/.config/pi/styre`.
+- **The clean copy is a fresh history-less clone.** `git clone` refuses a non-empty target, so the
+  `repo` directory is pre-created empty first; a bare `git checkout <sha>` detaches on its own
+  (`--detach` requires a pathspec). The finished work is thus unfindable in `git log` inside the
+  copy.
+- **The reference suite is copied in after the `git reset --hard` + `git clean -fdq`,** so it can
+  never fail a phase gate during the run; conversely the gates in the benchmark design are changed
+  to fail while the suite is present (`test ! -e bench_reference`), which is what the tests rely on
+  to stop the agent before scoring. Tracked files (e.g. `docs/decisions.md`) survive the reset with
+  their committed content, so keep tests on tracked files pass even after a blocked run.
+- **`result.json` is written on every path, including early failures**; a failed run never reaches
+  the keys for the steps it skipped, and they are `null`. The score's keys are merged in by
+  `dict.update`, so a run that scored has real values and one that did not has the `null`s.
