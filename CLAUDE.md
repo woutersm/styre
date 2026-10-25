@@ -42,7 +42,7 @@ read.
 | `skills/styre/DIRECTOR.md` | How a person and an interactive assistant work with styre: five rules. |
 | `skills/styre/writing-designs.md` | How to shape a design before a run. For the author — never named in a design (`advisories()` flags it). |
 | `docs/` | `architecture.md` (how the parts fit, with diagrams) and `lessons.md` (each failure that shaped styre, with its numbers). Update both when a mechanism changes. |
-| `evals/` | Development evals, not runtime: `interface.py` (does the model follow the contract, against real pi) and `advisories.py` (do `check`'s warnings predict trouble, over a repo's run history). |
+| `evals/` | Development evals, not runtime: `interface.py` (does the model follow the contract, against real pi) `advisories.py` (do `check`'s warnings predict trouble, over a repo's run history), `bench.py` and `bench_report.py` (run benchmark designs end to end and report the scores) and `probe.py` (a model server's raw prefill, decode and batching speed). |
 | `TODO.md` | What is left and what is parked. |
 | `tests/` | pytest. `fake_pi.py` is installed on `PATH` as `pi`, so the whole loop runs without a model. `tests/fixtures/*.jsonl` are real captured pi output: write parsers against these, not assumptions. |
 

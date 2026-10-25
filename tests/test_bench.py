@@ -143,6 +143,11 @@ def make_design_dir(tmp_path, repo, start=None):
     return design_dir
 
 
+SETUP = {"name": "omlx072-dflash2-4bit", "hardware": "M4 Pro 48 GB",
+         "server": {"name": "oMLX", "version": "0.7.2"},
+         "speculative": {"method": "DFlash 2", "draft": "Splash DFlash 2 draft"}}
+
+
 def make_pi_config(tmp_path):
     """A pi config naming provider `local` / model `m`, as the design asks for."""
     d = tmp_path / "piconfig"
@@ -176,6 +181,7 @@ def git_log(repo):
 
 def test_bench_ok(monkeypatch, tmp_path, repo, fake_pi):
     pi_config = make_pi_config(tmp_path)
+    (pi_config / "setup.json").write_text(json.dumps(SETUP), encoding="utf-8")
     patch_env(monkeypatch, fake_pi, pi_config, "ok")
     design_dir = make_design_dir(tmp_path, repo)
     design = json.loads((design_dir / "bench.json").read_text(encoding="utf-8"))
@@ -195,6 +201,7 @@ def test_bench_ok(monkeypatch, tmp_path, repo, fake_pi):
                                "base_url": "http://localhost:1/v1",
                                "context_window": 1000, "thinking": None}
     assert result["label"] == "bench-test"
+    assert result["setup"] == SETUP
 
 
 def test_bench_blocked(monkeypatch, tmp_path, repo, fake_pi):
@@ -420,3 +427,18 @@ def test_report_shows_tok_per_second(tmp_path):
     text = report(tmp_path, mk_result(tmp_path, "a"))
     assert re.search(r"\| Prefill tok/s +\| Decode tok/s +\|", text)
     assert re.search(r"\| 89\.6 +\| 0\.1 +\|", text)
+
+
+def test_read_setup_is_none_without_a_file_and_on_bad_json(tmp_path):
+    assert bench.read_setup(tmp_path) is None
+    (tmp_path / "setup.json").write_text("{not json", encoding="utf-8")
+    assert bench.read_setup(tmp_path) is None
+
+
+def test_report_groups_by_setup_name(tmp_path):
+    a = mk_result(tmp_path, "a", setup={"name": "splash-4bit"})
+    b = mk_result(tmp_path, "b", setup={"name": "omlx072-dflash2-4bit"})
+    text = report(tmp_path, a, b)
+    assert len(re.findall(r"\| Design +\| Started", text)) == 2
+    assert "## styre 0.25.0, brief, splash-4bit, splash/" in text
+    assert "## styre 0.25.0, brief, omlx072-dflash2-4bit, splash/" in text

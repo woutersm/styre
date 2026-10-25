@@ -58,7 +58,7 @@ Each module has one job.
 | `rundir.py` | Paths inside `.styre/runs/<id>/` |
 | `state.py` | Reads and judges the agent's state file |
 | `timeline.py` | Appends measured events to `timeline.jsonl` and flushes each line |
-| `summarize.py` | Reads a run back from disk and writes `summary.md` |
+| `summarize.py` | Reads a run back from disk and writes `summary.md`, with per-request model time (prefill, decode, cache hit, tok/s) off the event stamps; `--compare A B` prints two runs side by side |
 | `pi_extensions/*.js` | Loaded into every pi process with `--extension` |
 
 ## One phase

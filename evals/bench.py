@@ -154,6 +154,17 @@ def read_model(config_dir):
     return out
 
 
+def read_setup(config_dir):
+    """The config directory's `setup.json`: what the pi config cannot say (hardware, server,
+    engine, quant, speculative decoding), written by hand once per setup. None when absent
+    or unreadable. pi ignores the file."""
+    try:
+        setup = json.loads((Path(config_dir) / "setup.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return setup if isinstance(setup, dict) else None
+
+
 def _git(repo, *args, check=True):
     return run(["git", *args], cwd=repo, check=check)
 
@@ -293,7 +304,8 @@ def run_bench(design_dir, variant, styre_cmd, out, pi_config=None, label=None):
     styre_log = result_dir / "styre.log"
     result = {
         "design": design_dir.name, "variant": variant, "styre": None,
-        "label": design.get("label"), "model": read_model(config_dir), "served": None,
+        "label": design.get("label"), "setup": read_setup(config_dir),
+        "model": read_model(config_dir), "served": None,
         "start": design.get("start"), "started": datetime.now().astimezone().isoformat(),
         "hours": None, "exit_code": None, "run_id": None, "phases": design.get("phases"),
         "committed": None, "stopped": None, "error": None,

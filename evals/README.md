@@ -87,3 +87,46 @@ configuration gets one table of its results, a total row, the `Stops:` of the re
 stopped or errored, and a `Spread:` of the run-to-run noise per design. With more than one
 configuration a final `## Configurations` table compares them over the same designs. It
 calls no model and touches no git state; it reads `result.json` files only.
+
+### Setups: `setup.json`
+
+A pi config directory names the model; it cannot say what serves it. Put a `setup.json` beside
+`models.json` in each setup's config directory (pi ignores it), written by hand once:
+
+```json
+{
+  "name": "omlx072-dflash2-4bit",
+  "hardware": "Apple M4 Pro, 20-core GPU, 48 GB",
+  "server": {"name": "oMLX", "version": "0.7.2"},
+  "engine": {"name": "Splash", "version": null},
+  "model": "Qwen3.8-27B",
+  "target_quant": "4-bit",
+  "kv_cache": "int8",
+  "speculative": {"method": "DFlash 2", "draft": "DFlash 2 draft"},
+  "batching": "continuous",
+  "context": 120000
+}
+```
+
+Only `name` is read: `bench_report.py` groups by it and puts it in the heading. The rest is
+copied into every `result.json` and probe result as the record of what ran. Run a setup with
+`bench.py --pi-config <its directory>`.
+
+## `probe.py`: what a model server can do, at its peak
+
+```sh
+python evals/probe.py --pi-config ~/.config/pi/styre --out probes/<setup>-<date>.json
+```
+
+The shape speed posts use: one request at 4k, 16k and 64k prompt tokens, each generating 128
+tokens, then 1, 2 and 4 requests at once on a 256-token prompt generating 512. The batch test
+is short on prompt on purpose: on a host that prefills one request at a time, a long prompt
+makes two requests take exactly twice as long and hides whether decoding batches at all. Every prompt starts with a fresh random tag so no
+prefix cache serves it, and it is real Python source. Per test: TTFT, TPOT, prefill and decode
+tok/s, end-to-end time; per batch: total decode tok/s and the speedup over one request. A
+server with a Splash-style `/status` adds memory after each test and draft acceptance.
+
+It measures the host's ceiling on fresh prompts; a bench measures the agentic workload, which
+is mostly cached and mostly thinking. Compare setups on one host with the same probe, never
+against numbers from another machine. Run it with nothing else on the server: it warns when
+the server already has requests in flight.

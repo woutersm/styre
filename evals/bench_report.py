@@ -5,7 +5,7 @@
 A `PATH` is a `result.json`, or a directory: its own `result.json` when it has one, else each
 `*/result.json` one level down. Never deeper: result directories hold whole repositories.
 
-Results are grouped by configuration (styre version, variant, model, label); each configuration
+Results are grouped by configuration (styre version, variant, setup, model, label); each configuration
 gets one table over its results, a total row, its `Stops:` and its run-to-run `Spread:`. With
 more than one configuration a final `## Configurations` table compares them.
 """
@@ -58,9 +58,10 @@ def results_from(path):
 
 
 def config_key(result):
-    """The group a result belongs to: styre version, variant, model and label."""
+    """The group a result belongs to: styre version, variant, setup name, model and label."""
     m = result.get("model") or {}
-    return (result.get("styre"), result.get("variant"), m.get("provider"), m.get("id"),
+    setup = (result.get("setup") or {}).get("name")
+    return (result.get("styre"), result.get("variant"), setup, m.get("provider"), m.get("id"),
             m.get("context_window"), m.get("thinking"), result.get("label"))
 
 
@@ -72,12 +73,14 @@ def sort_key(key):
 def config_name(key):
     """The heading for a configuration, leaving out what is null, such as
     `styre 0.25.0, brief, splash/mlx-community/Qwen3.8-27B-4bit, 120,000 ctx, splash 0.4`."""
-    styre, variant, provider, model_id, ctx, _thinking, label = key
+    styre, variant, setup, provider, model_id, ctx, _thinking, label = key
     parts = []
     if styre:
         parts.append(f"styre {styre}")
     if variant:
         parts.append(variant)
+    if setup:
+        parts.append(setup)
     if provider and model_id:
         parts.append(f"{provider}/{model_id}")
     if ctx:
