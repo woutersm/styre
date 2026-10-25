@@ -72,6 +72,30 @@ def test_summarize_takes_an_optional_run():
     assert build_parser().parse_args(["summarize", "20260920-1200"]).run == "20260920-1200"
 
 
+def test_summarize_compare_takes_two_runs():
+    args = build_parser().parse_args(["summarize", "--compare", "a", "b"])
+    assert args.run is None and args.compare == ["a", "b"]
+
+
+def test_summarize_refuses_a_run_together_with_compare():
+    import pytest
+    with pytest.raises(SystemExit) as e:
+        main(["summarize", "somerun", "--compare", "a", "b"])
+    assert str(e.value) == "Give either a run or --compare A B, not both."
+
+
+def test_summarize_compare_exits_on_an_unknown_run(tmp_path, monkeypatch):
+    import pytest
+
+    import styre.rundir as rd
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(rd, "RUNS", tmp_path / "runs")
+    (tmp_path / "runs").mkdir()
+    with pytest.raises(SystemExit) as e:
+        main(["summarize", "--compare", "nope", "b"])
+    assert str(e.value) == "No such run: nope."
+
+
 def test_defaults_match_the_documented_ones():
     args = build_parser().parse_args(["run", "d.md"])
     assert (args.retries, args.timeout, args.gate_timeout) == (2, 7200, 900)

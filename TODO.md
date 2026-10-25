@@ -7,9 +7,6 @@ lives in `CLAUDE.md`; this file is the list, not the record.
 
 - [ ] **A time limit per bash call** (~10 min), enforced by styre, not left to the agent.
       A hanging `uv run python` probe once cost 2 hours before the idle timeout fired.
-- [ ] **`styre summarize --compare runA runB`.** Two runs side by side per phase: agent time,
-      peak context, restarts, fix rounds, styre tool calls. Needed to judge a change to styre
-      itself against the run before it.
 - [ ] **`check`'s new-dependency warning misreads names as packages.** It has flagged a
       function, a file the phase creates and an attribute as libraries "this repo does not
       depend on yet". Match backticked names against the dependency manifest's own

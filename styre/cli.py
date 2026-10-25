@@ -12,7 +12,7 @@ from styre.gitops import not_at_root
 from styre.prompts import build_prompt
 from styre.rundir import RUNS, resolve
 from styre.runner import PreflightError, context_budget, orchestrate, preflight
-from styre.summarize import history_lines, repo_history, summarize
+from styre.summarize import collect, compare, history_lines, repo_history, summarize
 
 EXAMPLES = """examples:
   styre design "CSV export"            write a design with Claude Code (/styre-design)
@@ -115,6 +115,18 @@ def cmd_run(args):
 
 
 def cmd_summarize(args):
+    if args.run and args.compare:
+        sys.exit("Give either a run or --compare A B, not both.")
+    if args.compare:
+        runs = []
+        for name in args.compare:
+            run = resolve(name)
+            if run is None:
+                sys.exit(f"No such run: {name}.")
+            runs.append(run)
+        # Printed, never written: a comparison is a check, not a record in either run.
+        print(compare(collect(runs[0]), collect(runs[1])))
+        return 0
     run = resolve(args.run)
     if run is None:
         sys.exit(f"No such run: {args.run}." if args.run else
@@ -170,6 +182,8 @@ def build_parser():
     summary = sub.add_parser("summarize", help="report what happened in a run")
     summary.add_argument("run", nargs="?", default=None, metavar="RUN",
                          help="a run id or directory (default: the latest run)")
+    summary.add_argument("--compare", nargs=2, metavar=("A", "B"), default=None,
+                         help="two runs side by side, per phase")
     summary.set_defaults(func=cmd_summarize)
 
     return ap

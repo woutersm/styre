@@ -18,8 +18,9 @@ def events_file(path, source, seconds=1):
                                 "line": line}) + "\n")
 
 
-def make_run(tmp_path, timeline=(), states=(), fixture="pi_toolcall.jsonl", phases=(1,)):
-    run = RunDir(tmp_path / "20260920-220000")
+def make_run(path, timeline=(), states=(), fixture="pi_toolcall.jsonl", phases=(1,),
+             run_id="20260920-220000"):
+    run = RunDir(path / run_id)
     (run.root / "logs").mkdir(parents=True)
     if timeline:
         run.timeline.write_text("".join(json.dumps(e) + "\n" for e in timeline), encoding="utf-8")
@@ -360,3 +361,80 @@ def test_a_stopped_phase_names_its_last_progress_file(tmp_path):
     # The run's real directory, not `.styre/runs/<id>`: summarize also takes a path.
     assert f"`{run.progress(2).as_posix()}`" in text
     assert "phase1.progress.md" not in text
+
+
+# --- compare -----------------------------------------------------------------
+
+
+def fast_timeline():
+    """TIMELINE where phase 1 took 300 agent seconds in total: 5.0 minutes, against the 900
+    (15.0) of the plain TIMELINE."""
+    return [dict(e, seconds=300.0 if e["step"] == "builder" else 0.0)
+            if e["event"] == "pi_end" else dict(e) for e in TIMELINE]
+
+
+def test_compare_puts_two_runs_side_by_side(tmp_path):
+    """`15.0` is TIMELINE's 900 s of agent time and `5.0` is 300 s: the exit criterion's
+    row, exactly."""
+    from styre.summarize import compare
+    a = collect(make_run(tmp_path / "a", timeline=TIMELINE))
+    b = collect(make_run(tmp_path / "b", timeline=fast_timeline()))
+    text = compare(a, b)
+    assert text.startswith("# Compare 20260920-220000 → 20260920-220000")
+    assert "- 20260920-220000: design d.md, styre 0.1.0" in text
+    assert "| 1 | Phase 1: One | committed → committed | 15.0 → 5.0 |" in text
+    # A total row, the same way: summed agent minutes.
+    assert "|  | total | - → - | 15.0 → 5.0 |" in text
+
+
+def test_a_phase_present_in_only_one_run_shows_a_dash(tmp_path):
+    from styre.summarize import compare
+    a = collect(make_run(tmp_path / "a", timeline=TIMELINE, phases=(1, 2)))
+    b = collect(make_run(tmp_path / "b", timeline=fast_timeline(), phases=(1,)))
+    text = compare(a, b)
+    # Phase 2 ran in A (no phase_end in the timeline, so its status is unknown) and not in B.
+    assert "| 2 | Phase 2 | ? → - | - → - |" in text
+    assert "| 1 | Phase 1: One | committed → committed | 15.0 → 5.0 |" in text
+
+
+def test_compare_summarizes_both_runs_without_writing(tmp_path, monkeypatch, capsys):
+    """The CLI prints and writes no file: neither run gets a summary.md."""
+    import styre.rundir as rd
+    from styre.cli import main
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(rd, "RUNS", tmp_path / "runs")
+    (tmp_path / "runs").mkdir()
+    make_run(tmp_path / "runs", timeline=TIMELINE, run_id="a")
+    make_run(tmp_path / "runs", timeline=fast_timeline(), run_id="b")
+    assert main(["summarize", "--compare", "a", "b"]) == 0
+    assert "| 1 | Phase 1: One | committed → committed | 15.0 → 5.0 |" in capsys.readouterr().out
+    assert not (tmp_path / "runs" / "a" / "summary.md").exists()
+    assert not (tmp_path / "runs" / "b" / "summary.md").exists()
+
+
+def test_compare_rejects_an_unknown_run(tmp_path, monkeypatch):
+    import pytest
+
+    import styre.rundir as rd
+    from styre.cli import main
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(rd, "RUNS", tmp_path / "runs")
+    (tmp_path / "runs").mkdir()
+    with pytest.raises(SystemExit) as e:
+        main(["summarize", "--compare", "nope", "b"])
+    assert str(e.value) == "No such run: nope."
+
+
+def test_a_run_and_compare_together_is_an_error(tmp_path, monkeypatch):
+    import pytest
+
+    from styre.cli import main
+    with pytest.raises(SystemExit) as e:
+        main(["summarize", "somerun", "--compare", "a", "b"])
+    assert str(e.value) == "Give either a run or --compare A B, not both."
+
+
+def test_summarize_parser_accepts_compare():
+    from styre.cli import build_parser
+    args = build_parser().parse_args(["summarize", "--compare", "A", "B"])
+    assert args.run is None and args.compare == ["A", "B"]

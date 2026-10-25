@@ -484,6 +484,12 @@ def phase_table(summary):
             "same as none."]
 
 
+def cache_hit_cell(usage):
+    """The `Cache hit` cell: the share of prompt tokens taken from the cache, or a dash
+    when there were no prompt tokens at all (which is not a 0% hit rate)."""
+    return "-" if usage.cache_hit is None else f"{usage.cache_hit:.1%}"
+
+
 def model_time_table(summary):
     """The `## Model time` section: what the model itself spent, per phase and in total.
 
@@ -492,14 +498,11 @@ def model_time_table(summary):
     when no request was timed.
     """
 
-    def hit_cell(usage):
-        return "-" if usage.cache_hit is None else f"{usage.cache_hit:.1%}"
-
     rows = []
     for p in summary.phases:
         u = p.usage
         rows.append([p.n, p.name, count(u.requests), count(u.input), count(u.cache_read),
-                     hit_cell(u), count(u.output),
+                     cache_hit_cell(u), count(u.output),
                      minutes(u.prefill_seconds, u.timed), minutes(u.decode_seconds, u.timed)])
     total = Usage()
     for p in summary.phases:
@@ -512,7 +515,7 @@ def model_time_table(summary):
         total.decode_seconds += u.decode_seconds
         total.timed += u.timed
     rows.append(["", "total", count(total.requests), count(total.input), count(total.cache_read),
-                 hit_cell(total), count(total.output),
+                 cache_hit_cell(total), count(total.output),
                  minutes(total.prefill_seconds, total.timed),
                  minutes(total.decode_seconds, total.timed)])
     return ["## Model time", "",
@@ -587,6 +590,83 @@ def summarize(run):
     text = render(collect(run))
     (run.root / "summary.md").write_text(text, encoding="utf-8")
     return text
+
+
+def _phase_cells(p):
+    """One phase's compare-row cells, in the compare table's column order.
+
+    Formatted the way the summary formats them; None values read as a dash or `-` the way
+    the summary does, so a number means the same thing in both reports.
+    """
+    u = p.usage
+    return [p.status or "?",
+            minutes(p.agent_seconds, p.pi_steps),
+            count(u.peak),
+            str(len(p.relays)),
+            "-" if p.rounds is None else str(p.rounds),
+            str(len(p.agent_gates)),
+            cache_hit_cell(u),
+            minutes(u.prefill_seconds, u.timed),
+            minutes(u.decode_seconds, u.timed)]
+
+
+def _run_total_cells(run):
+    """The compare table's total row for one run: sums, except Peak ctx (the larger peak) and
+    Cache hit (over the summed prompt tokens)."""
+    u = Usage()
+    for p in run.phases:
+        u.requests += p.usage.requests
+        u.input += p.usage.input
+        u.cache_read += p.usage.cache_read
+        u.output += p.usage.output
+        u.prefill_seconds += p.usage.prefill_seconds
+        u.decode_seconds += p.usage.decode_seconds
+        u.timed += p.usage.timed
+    peaks = [p.usage.peak for p in run.phases if p.usage.peak is not None]
+    return ["-",
+            minutes(sum(p.agent_seconds for p in run.phases),
+                    any(p.pi_steps for p in run.phases)),
+            count(max(peaks)) if peaks else "-",
+            str(sum(len(p.relays) for p in run.phases)),
+            str(sum(p.rounds or 0 for p in run.phases)),
+            str(sum(len(p.agent_gates) for p in run.phases)),
+            cache_hit_cell(u),
+            minutes(u.prefill_seconds, u.timed),
+            minutes(u.decode_seconds, u.timed)]
+
+
+def compare(a, b):
+    """Two runs side by side: one row per phase, every cell `<A value> → <B value>`, with a
+    dash where a side has no such phase. Returns the markdown; it writes no file, the CLI
+    prints it."""
+    out = [f"# Compare {a.id} → {b.id}", ""]
+    for run in (a, b):
+        first = run.first
+        facts = [f"design {first['design']}" if first.get("design") else None,
+                 f"styre {first['styre']}" if first.get("styre") else None]
+        line = f"- {run.id}"
+        if any(facts):
+            line += ": " + ", ".join(f for f in facts if f)
+        out.append(line)
+    by_a = {p.n: p for p in a.phases}
+    by_b = {p.n: p for p in b.phases}
+    dash = ["-"] * 9
+    rows = []
+    for n in sorted(set(by_a) | set(by_b)):
+        pa, pb = by_a.get(n), by_b.get(n)
+        cells_a = _phase_cells(pa) if pa else dash
+        cells_b = _phase_cells(pb) if pb else dash
+        title = (pb.title if pb is not None else pa.title) or f"Phase {n}"
+        rows.append([str(n), title] + [f"{x} → {y}" for x, y in zip(cells_a, cells_b)])
+    rows.append(["", "total"] + [f"{x} → {y}"
+                                 for x, y in zip(_run_total_cells(a), _run_total_cells(b))])
+    # No padding: a cell is exactly its value, so a row reads `| 1 | Phase 1: One | ... |
+    # committed → committed | 15.0 → 5.0 | ...` and can be diffed or grep'ed as text.
+    header = ["#", "Phase", "Status", "Agent min", "Peak ctx", "Fresh starts", "Fix",
+              "Gate runs", "Cache hit", "Prefill min", "Decode min"]
+    lines = ["| " + " | ".join(str(c) for c in row) + " |" for row in [header, *rows]]
+    out += ["", *lines, ""]
+    return "\n".join(out).rstrip() + "\n"
 
 
 def repo_history(runs_dir):
