@@ -75,6 +75,15 @@ scored on what it committed, with `capped: true` in its result.
 python evals/bench.py path/to/design-dir --variant brief --label "splash 0.4" --out results
 ```
 
+`--plan` adds the frontier to the benchmark: after setup and before the run, it calls
+`<styre> plan` on the design in the copy, under the same cap clock, logging to `plan.log` in
+the result directory. A failing plan records `"styre plan failed: "` plus the last line of its
+output in `error`, and the design is not run. The result then carries `"planned"` (true when
+the run used the planned design), `"plan_hours"` (the plan call's wall-clock time) and
+`"frontier"` (the sums of the run's `model_call` events: `calls`, `tokens_in`, `tokens_out`,
+`cost_usd`); without `--plan` all three stay `false` / `null` / `null`, and `"hours"` is
+always the `styre run` time, never the plan's.
+
 `bench_report.py` turns the `result.json` files into one markdown report. A path is a
 `result.json`, or a directory (its own `result.json`, else each `*/result.json` one level
 down; it never searches deeper, because result directories hold whole repositories).

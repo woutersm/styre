@@ -125,3 +125,20 @@ implementing the nine design steps, plus a CLI in `main()`.
 - Docs: `README.md` gained a `plan` row in the Commands table and a section on what it does
   and commits; `CLAUDE.md`'s Files table names `styre/claude.py`, `styre/settings.py`,
   `styre/planner.py` and `tests/fake_claude.py`, and the `cli.py` row names `plan`.
+
+## Phase 3: Model calls in the report, and `bench.py --plan`
+
+- `## Model calls` summarizes the run's `model_call` timeline events (written by `claude.call`
+  in Phase 1) rather than a new usage type; the table is one row per role plus a total, and a
+  run without `model_call` events omits the section entirely. A phase-less run (a `styre plan`
+  run: `run_start kind: "plan"`, no phases) skips its phase/where-to-look sections in
+  `render()` and `where_to_look()` so it summarizes without an error.
+- In `bench.py --plan`, `frontier` is the sums of the **plan run's** `model_call` events
+  (found via the copy's `.styre/latest.txt` after `do_plan`), not the `styre run` run's —
+  the run made no frontier calls; `planned` is true only when the plan exited 0, and a
+  failed plan records `error` and skips the run, leaving `hours` the `styre run` time
+  (null when skipped).
+- `bench_report` groups by `config_key` which now includes `planned`, so planned and
+  unplanned results of one setup are two groups (old `result.json` files without the key
+  sort as `None`, i.e. unplanned), and only a group with planned results gets the
+  `Plan h` and `Frontier tok` (tokens in + out) columns, summed in the total row.

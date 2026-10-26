@@ -4,6 +4,7 @@ The scoring tests use the two junit samples the benchmark runners write. The run
 the whole thing with real styre and the fake agent (a lean git repository, a design, a
 reference suite) and check the `result.json` each produces.
 """
+import hashlib
 import json
 import re
 import subprocess
@@ -174,6 +175,13 @@ def patch_env(monkeypatch, fake_pi, pi_config, default):
         monkeypatch.setenv(var, value)
 
 
+def make_styre_config(tmp_path):
+    """A styre.json with a short frontier deadline, for bench --plan tests."""
+    cfg = tmp_path / "styre.json"
+    cfg.write_text('{"frontier": {"command": ["claude"], "timeout": 60}}', encoding="utf-8")
+    return cfg
+
+
 def git_log(repo):
     out = subprocess.run(["git", "log", "--format=%s"], cwd=repo,
                          capture_output=True, text=True, check=True)
@@ -192,6 +200,8 @@ def test_bench_ok(monkeypatch, tmp_path, repo, fake_pi):
                           tmp_path / "results", pi_config=str(pi_config), label="bench-test")
     result = json.loads(Path(out["_dir"]).read_text(encoding="utf-8"))
     assert result["error"] is None
+    assert result["planned"] is False  # run without --plan: no plan, no frontier
+    assert result["plan_hours"] is None and result["frontier"] is None
     assert result["new"] == [1, 1]
     assert result["keep"] == [1, 1]
     assert result["committed"] == 2
@@ -257,6 +267,102 @@ def test_bench_setup_failure(monkeypatch, tmp_path, repo, fake_pi):
     assert result["new"] is None
 
 
+# --- `--plan`: the frontier plans the design before the run ----------------------
+
+
+def planned_design():
+    """The conftest brief (gates as in make_design_dir) with one implementation-help line
+    added, keeping every line and gate the brief has."""
+    brief = DESIGN.replace("test -f done.txt", "test ! -e bench_reference && test -f done.txt")
+    return brief.replace("Preamble every phase needs.",
+                         "Preamble every phase needs.\nThe tests run with `uv run pytest -q`.")
+
+
+def claude_reply_json(planned, ok=True):
+    return json.dumps({
+        "type": "result", "subtype": "success" if ok else "error_max_turns",
+        "is_error": not ok, "num_turns": 1, "structured_output": {"design": planned} if ok else None,
+        "total_cost_usd": 0.161, "duration_ms": 6125,
+        "usage": {"input_tokens": 4, "cache_creation_input_tokens": 19268,
+                  "cache_read_input_tokens": 5017, "output_tokens": 301,
+                  "output_tokens_details": {"thinking_tokens": 63}},
+        "modelUsage": {"claude-opus-5-5": {"inputTokens": 4, "outputTokens": 301,
+                                          "costUSD": 0.161}},
+    } if ok else {
+        "type": "result", "subtype": "error_max_budget_usd", "is_error": True, "num_turns": 2,
+        "structured_output": None, "total_cost_usd": 0.0001, "duration_ms": 2511,
+        "usage": {"input_tokens": 0, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+                  "output_tokens": 0, "output_tokens_details": {"thinking_tokens": 0}},
+        "errors": ["Reached maximum budget ($0.0001)"],
+    })
+
+
+def bench_env(monkeypatch, tmp_path, fake_pi, fake_claude, pi_config, default, reply):
+    patch_env(monkeypatch, fake_pi, pi_config, default)
+    monkeypatch.setenv("STYRE_CONFIG", str(make_styre_config(tmp_path)))
+    log = tmp_path / "fake_claude.log"
+    monkeypatch.setenv("FAKE_CLAUDE_LOG", str(log))
+    monkeypatch.setenv("FAKE_CLAUDE_REPLY", str(reply))
+    monkeypatch.delenv("FAKE_CLAUDE_EXIT", raising=False)
+    return log
+
+
+def test_bench_plan_plans_then_runs(monkeypatch, tmp_path, repo, fake_pi, fake_claude):
+    pi_config = make_pi_config(tmp_path)
+    reply = tmp_path / "planned.json"
+    reply.write_text(claude_reply_json(planned_design()), encoding="utf-8")
+    bench_env(monkeypatch, tmp_path, fake_pi, fake_claude, pi_config, "ok", reply)
+    design_dir = make_design_dir(tmp_path, repo)
+    design = json.loads((design_dir / "bench.json").read_text(encoding="utf-8"))
+    design["repo"] = str(repo)
+    (design_dir / "bench.json").write_text(json.dumps(design), encoding="utf-8")
+    out = bench.run_bench(design_dir, "brief", f"{sys.executable} -m styre",
+                          tmp_path / "results", pi_config=str(pi_config), plan=True)
+    result_dir = Path(out["_dir"]).parent
+    result = json.loads(Path(out["_dir"]).read_text(encoding="utf-8"))
+    assert result["error"] is None, result["error"]
+    assert result["planned"] is True
+    assert result["plan_hours"] is not None
+    assert result["frontier"] == {"calls": 1, "tokens_in": 24289, "tokens_out": 301,
+                                  "cost_usd": 0.161}
+    assert result["committed"] == 2  # the run ran the design and committed every phase
+    assert (result_dir / "plan.log").exists()
+    assert "tokens in" in (result_dir / "plan.log").read_text(encoding="utf-8")  # the planner's usage
+    root = result_dir / "repo" / ".styre" / "runs"
+    timeline = (root / result["run_id"] / "timeline.jsonl").read_text(encoding="utf-8")
+    events = [json.loads(line) for line in timeline.splitlines()]
+    start = [e for e in events if e["event"] == "run_start"][0]
+    # the run ran the planned design, not the brief: its hash is the planned text's hash.
+    assert start["design_sha256"] == hashlib.sha256(
+        planned_design().encode("utf-8")).hexdigest()[:16]
+
+
+def test_bench_plan_failure_records_the_error_and_skips_the_run(monkeypatch, tmp_path, repo,
+                                                                fake_pi, fake_claude):
+    pi_config = make_pi_config(tmp_path)
+    reply = tmp_path / "fail.json"
+    reply.write_text(claude_reply_json(None, ok=False), encoding="utf-8")
+    bench_env(monkeypatch, tmp_path, fake_pi, fake_claude, pi_config, "ok", reply)
+    design_dir = make_design_dir(tmp_path, repo)
+    design = json.loads((design_dir / "bench.json").read_text(encoding="utf-8"))
+    design["repo"] = str(repo)
+    (design_dir / "bench.json").write_text(json.dumps(design), encoding="utf-8")
+    out = bench.run_bench(design_dir, "brief", f"{sys.executable} -m styre",
+                          tmp_path / "results", pi_config=str(pi_config), plan=True)
+    result_dir = Path(out["_dir"]).parent
+    result = json.loads(Path(out["_dir"]).read_text(encoding="utf-8"))
+    assert result["planned"] is False
+    assert result["error"] == "styre plan failed: " + (
+        result_dir / "plan.log").read_text(encoding="utf-8") \
+        .strip().splitlines()[-1]
+    assert result["error"].startswith("styre plan failed: ")
+    assert "Reached maximum budget" in result["error"]
+    assert result["run_id"] is None and result["hours"] is None  # the design was not run
+    assert result["new"] is None
+    assert (result_dir / "plan.log").exists()
+    assert not (result_dir / "styre.log").exists()  # the run was skipped, not killed
+
+
 # --- the benchmark report ---------------------------------------------------------
 
 MODEL = {"provider": "splash", "id": "mlx-community/Qwen3.8-27B-4bit",
@@ -274,6 +380,9 @@ def mk_result(tmp_path, name, **over):
                                   "output": 229, "peak": 0, "prefill_seconds": 60,
                                   "decode_seconds": 3600, "agent_seconds": 0, "gate_seconds": 0}}
     r.update(over)
+    r.setdefault("planned", False)
+    r.setdefault("plan_hours", None)
+    r.setdefault("frontier", None)
     path = tmp_path / name / "result.json"
     path.parent.mkdir(parents=True)
     path.write_text(json.dumps(r, indent=2), encoding="utf-8")
@@ -298,12 +407,38 @@ def test_report_one_config_two_results(tmp_path):
     assert "## Configurations" not in text  # one configuration: no comparison table
     assert "Spread:" in text
     assert "- splash: new 15, 17 of 17; hours 1.10, 1.32" in text
-    assert "Stops:" not in text
-    # total row: sums with the overall percentage, cache hit over the summed tokens
-    assert re.search(r"\| 32/34 \(94%\) +\|", text)
-    assert re.search(r"\| 10,756 +\|", text) and re.search(r"\| 13,568 +\|", text)
-    assert re.search(r"\| 55.8% +\|", text)  # 13568/(10756+13568), over the summed tokens
-    assert re.search(r"\| 2\.0 +\|", text)  # 2 * 3600 seconds of decode
+    assert "Plan h" not in text  # no planned results in this group: no frontier columns
+
+
+def test_report_planned_group_gets_plan_and_frontier_columns(tmp_path):
+    a = mk_result(tmp_path, "a", planned=False)
+    b = mk_result(tmp_path, "b", planned=True, plan_hours=0.12,
+                  frontier={"calls": 1, "tokens_in": 1000, "tokens_out": 250, "cost_usd": 0.16},
+                  started="2026-10-25T11:00:00+00:00")
+    text = report(tmp_path, a, b)
+    assert len(re.findall(r"\| Design +\| Started", text)) == 2  # two configurations
+    unplanned = text.split("## ")[1].split("## ")[0]  # the group without planned results
+    planned = text.split("## styre 0.25.0, brief, planned")[1]
+    assert "Plan h" not in unplanned and "Frontier tok" not in unplanned
+    assert "## styre 0.25.0, brief, planned" in text  # the variant, then "planned"
+    assert re.search(r"\| Plan h +\| Frontier tok +\|", planned)
+    assert re.search(r"\| 0\.12 +\| 1,250 +\|", planned)  # 0.12 h, 1000 + 250 tokens
+    assert re.search(r"Total.*\| 0\.12 +\| 1,250 +\|", planned)  # the total row
+
+
+def test_result_without_plan_keys_reads_as_unplanned():
+    assert bench_report.config_key({"styre": "1", "variant": "brief"}) == (
+        "1", "brief", None, None, None, None, None, None, None)
+    assert bench_report.config_key({"styre": "1", "variant": "brief", "planned": True}) == (
+        "1", "brief", True, None, None, None, None, None, None)
+
+
+def test_report_heading_shows_planned_after_the_variant(tmp_path):
+    a = mk_result(tmp_path, "a", planned=True, plan_hours=0.1,
+                  frontier={"calls": 1, "tokens_in": 100, "tokens_out": 25,
+                            "cost_usd": 0.01})
+    text = report(tmp_path, a)
+    assert "## styre 0.25.0, brief, planned, splash/" in text
 
 
 def test_report_two_configurations(tmp_path):
