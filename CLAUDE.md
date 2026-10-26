@@ -33,7 +33,11 @@ migration runs.
 
 | File | What it is |
 | --- | --- |
-| `styre/cli.py` | The `design` (opens interactive `claude` on `/styre-design`), `check`, `run` and `summarize` subcommands; the `styre` console script. |
+| `styre/cli.py` | The `design` (opens interactive `claude` on `/styre-design`), `check`, `plan`, `run` and `summarize` subcommands; the `styre` console script. |
+| `styre/claude.py` | `claude.call()` for frontier calls with a role, a JSON schema, tools and a timeline line; the settings load. |
+| `styre/settings.py` | The `styre.json` load: the frontier command and its timeout. |
+| `styre/planner.py` | `planner.problems()`: the check that the planned design kept every line, gate, criteria list and advisory of the brief; `PLAN_SCHEMA`.
+| `tests/fake_claude.py` | Test double for `claude`, installed on `PATH` like `fake_pi.py`. |
 | `styre/config.py` | Constants (`PI`, `PI_CONFIG_DIR`, `WORK`, `DECISIONS`, `AGENTS`, `EXCLUDES`, the context fractions), `context_window()`, and the `RunOptions` bundle. |
 | `styre/design.py` | Parsing a design into `Phase` objects; `phase_context()`; `validate()` (errors) and `advisories()` (warnings); the `check` rendering. |
 | `styre/prompts.py` | The phase prompt, the fix-round prompts (fresh and resumed), the handoff and the relay prompt. |
@@ -54,7 +58,7 @@ migration runs.
 | `docs/` | `architecture.md` (how the parts fit, with diagrams) and `lessons.md` (each failure that shaped styre, with its numbers): update both when a mechanism changes. `v2.md`: the v2 plan, its milestones and M0's results. `*-design.md`: the designs styre was built from. |
 | `evals/` | Development evals, not runtime: `interface.py` (does the model follow the contract, against real pi) `advisories.py` (do `check`'s warnings predict trouble, over a repo's run history), `bench.py` and `bench_report.py` (run benchmark designs end to end and report the scores) and `probe.py` (a model server's raw prefill, decode and batching speed). |
 | `TODO.md` | What is left and what is parked. |
-| `tests/` | pytest. `fake_pi.py` is installed on `PATH` as `pi`, so the whole loop runs without a model. `tests/fixtures/*.jsonl` are real captured pi output: write parsers against these, not assumptions. |
+| `tests/` | pytest. `fake_pi.py` is installed on `PATH` as `pi`, so the whole loop runs without a model; `fake_claude.py` does the same for `claude`. `tests/fixtures/` holds real captured pi and claude output: write parsers against these, not assumptions. |
 
 ## Where it runs
 

@@ -102,3 +102,26 @@ implementing the nine design steps, plus a CLI in `main()`.
   bin *first* on `PATH` (the `fake_claude` fixture returns that string; each test applies it
   itself) and clear `FAKE_CLAUDE_*` variables first. Tests that forgot this were flaky:
   the real binary answered in ~3.6s, just inside a 5s deadline.
+
+## Phase 2: `styre plan`
+
+- **The "brief untouched" test asserts the file equals the original brief, not the bad answer.**
+  `cmd_plan` never writes the file after a failed retry (the `problems` branch returns first),
+  so a test that feeds two bad answers must expect the brief back. The first version of
+  `test_second_bad_answer_fails_cleanly` asserted the file held the bad answer and failed on
+  that.
+- **A retry answer that is byte-identical to the file commits nothing.** `git commit` exits
+  1 with empty output when staging changed nothing, so `test_retry_prompt_after_a_gate_change`
+  had its second reply be the genuinely-planned design (added lines), not the unchanged brief.
+  The test also got a unique `replace` needle for *Phase 2's* gate — the first occurrence of
+  the fence in the design belongs to Phase 1 — with a `changed != brief` guard.
+- **The retry prompt is the first prompt verbatim plus "Your design was refused:" and the
+  problem sentences**, one per line. Tests check the first prompt is a substring of the
+  retry stdin.
+- `planner.problems` compares gate and criteria *lists* in order, compares advisories as
+  strings, and stops after a phase-count mismatch (the per-phase checks could not line up).
+  The "dropped line" sentence names the place: `Phase n` for a phase's
+  body, the preamble for one in the shared text.
+- Docs: `README.md` gained a `plan` row in the Commands table and a section on what it does
+  and commits; `CLAUDE.md`'s Files table names `styre/claude.py`, `styre/settings.py`,
+  `styre/planner.py` and `tests/fake_claude.py`, and the `cli.py` row names `plan`.
