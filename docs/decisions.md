@@ -87,3 +87,18 @@ implementing the nine design steps, plus a CLI in `main()`.
 - Cell formatting reuses `styre.summarize`'s `count`/`table`; cache hit is
   `cache_read/(input+cache_read)` at one decimal over summed tokens, matching `summarize`'s
   `cache_hit_cell`. Prefill/Decode hours are seconds/3600 at one decimal.
+
+## Phase 1: `styre.json` and the Claude Code runner
+
+- A failing `claude -p` can still print a well-formed result object (`is_error` true,
+  `structured_output` null, non-zero exit — the budget fixture is exactly that). The runner
+  therefore parses stdout before judging the exit code, so the quoted error wins over
+  "failed with exit code N"; a non-zero exit that prints no JSON reports the exit code, a
+  clean exit with unparsable output reports "not JSON".
+- The timeout is a plain deadline (`communicate(timeout=...)` plus `kill_tree`), not pi's
+  idle watchdog, because `claude -p` prints nothing until it ends; after the kill, draining
+  the pipes also catches `OSError` — the child's pipes can already be dead.
+- The developer's machine has a real `claude` on `PATH`, so every test must put the fake
+  bin *first* on `PATH` (the `fake_claude` fixture returns that string; each test applies it
+  itself) and clear `FAKE_CLAUDE_*` variables first. Tests that forgot this were flaky:
+  the real binary answered in ~3.6s, just inside a 5s deadline.
