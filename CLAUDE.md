@@ -8,16 +8,26 @@ what happened.
 
 ## Goal and scope
 
-Get a phased design built by a local model without trusting the model's own account of its
-work: the agent says it is done, styre decides whether it is, by running the gate commands
-itself and inspecting the staged diff. Nothing is committed on a red gate.
+Get a design built overnight by a local model, with a frontier model making the few
+decisions that need judgement at fixed points. styre is being migrated to v2 in place
+(`docs/v2.md`, milestones M0–M6); this file states the rules for both halves while the
+migration runs.
 
-styre does only what needs no judgement: run the phases, keep each one's context small, run
-the gate, commit, and write down what happened. Everything that needs judgement — writing
-the design, deciding what a stop means, reviewing the result — belongs to the person and the
-interactive assistant directing the run, as `skills/styre/DIRECTOR.md` sets out. So styre calls no other
-model, makes no network request of its own, and has no viewer: `summarize` is how a run is
-read.
+- **The local model does the work.** Qwen3.8-27B, through pi, builds; later also the
+  librarian and the curator, as single completions against the local endpoint.
+- **The frontier model works around the loop, never inside it.** Claude, as `claude -p`
+  runs styre starts, plans before a run, unblocks a stalled task and reviews a finished
+  milestone. Every call has a role, a typed input, a typed output checked against a schema,
+  and a timeline line with tokens in and out and its time. Nothing in the edit, run and fix
+  loop waits on Claude.
+- **The checks decide what is committed.** styre runs the full checks itself before every
+  commit, and never commits on red. Under v2 the builder is taken to act in good faith, so
+  the checks are its feedback, and test changes are a metric in every report; until M3
+  replaces the executor, v1's test guard stays a stop.
+- **The person approves before and reviews after**: the design or plan before a run,
+  anything live (merging, installing, deleting data, publishing), and the result.
+
+`summarize` and the timeline are how a run is read; there is no viewer.
 
 ## Files
 
@@ -41,7 +51,7 @@ read.
 | `skills/styre-design/SKILL.md` | The Claude Code skill (`/styre-design`): writing a design with the owner, up to an approved, checked design. |
 | `skills/styre/DIRECTOR.md` | How a person and an interactive assistant work with styre: five rules. |
 | `skills/styre/writing-designs.md` | How to shape a design before a run. For the author — never named in a design (`advisories()` flags it). |
-| `docs/` | `architecture.md` (how the parts fit, with diagrams) and `lessons.md` (each failure that shaped styre, with its numbers). Update both when a mechanism changes. |
+| `docs/` | `architecture.md` (how the parts fit, with diagrams) and `lessons.md` (each failure that shaped styre, with its numbers): update both when a mechanism changes. `v2.md`: the v2 plan, its milestones and M0's results. `*-design.md`: the designs styre was built from. |
 | `evals/` | Development evals, not runtime: `interface.py` (does the model follow the contract, against real pi) `advisories.py` (do `check`'s warnings predict trouble, over a repo's run history), `bench.py` and `bench_report.py` (run benchmark designs end to end and report the scores) and `probe.py` (a model server's raw prefill, decode and batching speed). |
 | `TODO.md` | What is left and what is parked. |
 | `tests/` | pytest. `fake_pi.py` is installed on `PATH` as `pi`, so the whole loop runs without a model. `tests/fixtures/*.jsonl` are real captured pi output: write parsers against these, not assumptions. |
@@ -148,13 +158,20 @@ AGENTS.md                 committed; only the styre block is managed
 
 ## Decisions that are settled — ask before reopening
 
-- **No judgement in styre.** It calls no model and makes no network request. Reviewing a run,
-  deciding what a stop means and fixing a design are the director's (`skills/styre/DIRECTOR.md`). Claude
-  as an automatic escape hatch, an automatic Claude review, the design-to-repo cross-check
-  and the web viewer were built and removed on 2026-10-03 for this reason. `styre design`
-  only starts interactive Claude Code for the person; styre reads nothing back from it.
-- **The agent's claim of success is never trusted**; the gate is the arbiter. Never commit
-  on a red gate. The test guard and the gate are not complexity to trim.
+- **Models only at fixed points, through runners.** styre calls a model only through a role
+  runner: pi for the builder, `claude -p` for the planner, advisor and reviewer, and the
+  local OpenAI-compatible endpoint (stdlib `urllib`) for single completions. Each runner has
+  the same process rules: idle timeout, process-group kill, closed stdin, and a stop when a
+  call returns no result or the wrong shape after one retry. No role is added without a
+  milestone that names it. (Replaces "no judgement in styre", 2026-10-03; reopened for v2 on
+  2026-10-25. What was removed then — Claude as an ad-hoc escape hatch and an automatic
+  review with no typed output — stays removed: the v2 roles are scheduled, typed and logged.)
+- **Until a role exists, its judgement is the director's** (`skills/styre/DIRECTOR.md`):
+  deciding what a stop means and reviewing a run stay with the person and the interactive
+  assistant until M4 (advisor) and M5 (reviewer) take them over.
+- **Never commit on red.** styre runs the checks itself before every commit, whatever the
+  agent says. The checks are not complexity to trim. The test guard is a stop until M3, then
+  a metric (said-done-on-red and test-removal rates) in every report.
 - **One commit per phase**, no tags: the commit is the rollback point.
 - **Serial, one fresh pi process per phase.** State lives in files and git, not in context —
   within a phase too: a step that outgrows its budget continues from its progress file.
@@ -168,12 +185,15 @@ AGENTS.md                 committed; only the styre block is managed
 - **The agent reports through tools** (`styre-tools.js`) writing the same `.styre/` files;
   styre still runs the gate itself, and only that run decides.
 - **The pi invocation is fixed**: no `--pi-cmd`, no `--model`. pi's own settings, in styre's
-  config directory, pick the model.
+  config directory, pick the model. From M2, `styre.json` names the Claude Code command
+  with its flags; a design never names a model.
 - **One report per run**, `summary.md`, computed from the timeline.
 - **Cross-platform**: pathlib, no POSIX-only shell syntax inside the package.
 
-Parked, ask before adding: held-out tests, spend budgets, a placeholder scan, parallel
-phases, run notifications, a queue of designs (the director chains runs).
+Parked, ask before adding: held-out tests at runtime (they live in the benchmark), spend
+budgets, a placeholder scan, run notifications, a queue of designs (the director chains
+runs), a web viewer. Parallel attempts: M0 measured 1.12x total decode for two concurrent
+requests on Splash (2026-10-25), so not on this host; re-measure on another setup first.
 
 ## Keep it simple
 
