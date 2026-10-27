@@ -239,6 +239,26 @@ def test_bench_copy_has_no_source_history(monkeypatch, tmp_path, repo, fake_pi):
     assert sum(1 for s in log if s.startswith("bench: start")) == 1
 
 
+def test_clone_source_keeps_urls_and_expands_paths():
+    assert bench.clone_source("https://github.com/o/r") == "https://github.com/o/r"
+    assert bench.clone_source("file:///tmp/r") == "file:///tmp/r"
+    assert bench.clone_source("git@github.com:o/r.git") == "git@github.com:o/r.git"
+    assert bench.clone_source("~/Dev/r") == str(Path.home() / "Dev" / "r")
+    assert bench.clone_source("/abs/r") == str(Path("/abs/r"))
+
+
+def test_bench_clones_from_a_url(monkeypatch, tmp_path, repo, fake_pi):
+    pi_config = make_pi_config(tmp_path)
+    patch_env(monkeypatch, fake_pi, pi_config, "ok")
+    design_dir = make_design_dir(tmp_path, repo)
+    design = json.loads((design_dir / "bench.json").read_text(encoding="utf-8"))
+    design["repo"] = Path(repo).resolve().as_uri()
+    (design_dir / "bench.json").write_text(json.dumps(design), encoding="utf-8")
+    out = bench.run_bench(design_dir, "brief", f"{sys.executable} -m styre",
+                          tmp_path / "results")
+    assert out["new"] == [1, 1]
+
+
 def test_bench_setup_failure(monkeypatch, tmp_path, repo, fake_pi):
     pi_config = make_pi_config(tmp_path)
     patch_env(monkeypatch, fake_pi, pi_config, "ok")

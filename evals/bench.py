@@ -171,13 +171,20 @@ def _git(repo, *args, check=True):
     return run(["git", *args], cwd=repo, check=check)
 
 
+def clone_source(repo):
+    """`repo` as `git clone` takes it: a URL (`https://...`, `git@host:owner/name`) as given,
+    a local path with `~` expanded."""
+    if "://" in repo or (":" in repo.split("/", 1)[0] and "@" in repo.split(":", 1)[0]):
+        return repo
+    return str(Path(repo).expanduser())
+
+
 def clean_copy(repo_dir, design_dir, start):
     """A clean copy of `start` with no history: clone, detach, re-init, one start commit, and
     styre's own excludes in `.git/info/exclude` so setup's dependency folders never dirty it.
     Returns the copy path."""
     (design_dir / "repo").mkdir(parents=True)
-    run(["git", "clone", "--quiet", str(Path(repo_dir).expanduser()), "repo"],
-        cwd=design_dir, check=True)
+    run(["git", "clone", "--quiet", clone_source(repo_dir), "repo"], cwd=design_dir, check=True)
     repo = design_dir / "repo"
     _git(repo, "checkout", "--quiet", start)
     shutil.rmtree(repo / ".git")
