@@ -138,6 +138,15 @@ def test_a_non_openai_provider_is_refused(tmp_path):
         probe.endpoint(d)
 
 
+def test_an_api_key_named_by_dollar_is_read_from_the_environment(tmp_path, monkeypatch):
+    d = pi_config(tmp_path, "http://x/v1")
+    models = json.loads((d / "models.json").read_text())
+    models["providers"]["p"]["apiKey"] = "$PROBE_TEST_KEY"
+    (d / "models.json").write_text(json.dumps(models))
+    monkeypatch.setenv("PROBE_TEST_KEY", "secret")
+    assert probe.endpoint(d)[1] == "secret"
+
+
 def test_status_gives_memory_and_acceptance(tmp_path, server):
     config = pi_config(tmp_path, server)
     result = probe.run_probe(config, contexts=(128,), batch=(1,), batch_context=128, gen=10,

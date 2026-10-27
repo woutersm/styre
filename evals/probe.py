@@ -46,7 +46,10 @@ def endpoint(config_dir):
         raise SystemExit(f"Provider {model['provider']} is not an OpenAI-compatible server.")
     if not model["base_url"] or not model["id"]:
         raise SystemExit(f"{config_dir} names no default model with a baseUrl.")
-    return model["base_url"].rstrip("/"), entry.get("apiKey"), model["id"]
+    key = entry.get("apiKey")
+    if key and key.startswith("$"):     # pi reads "$NAME" from the environment
+        key = os.environ.get(key[1:])
+    return model["base_url"].rstrip("/"), key, model["id"]
 
 
 def python_source():
