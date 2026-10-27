@@ -231,7 +231,12 @@ def test_bench_copy_has_no_source_history(monkeypatch, tmp_path, repo, fake_pi):
     (design_dir / "bench.json").write_text(json.dumps(design), encoding="utf-8")
     out = bench.run_bench(design_dir, "brief", f"{sys.executable} -m styre",
                           tmp_path / "results")
-    copy = Path(out["_dir"]).parent / "repo"
+    result_dir = Path(out["_dir"]).parent
+    assert not (result_dir / "repo").exists()
+    assert (result_dir / ".styre" / "latest.txt").is_file()
+    copy = tmp_path / "unbundled"
+    subprocess.run(["git", "clone", "--quiet", str(result_dir / "repo.bundle"), str(copy)],
+                   check=True)
     log = git_log(copy)
     assert "initial" not in log
     assert any("bench: brief design" in s for s in log)

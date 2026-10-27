@@ -8,6 +8,11 @@ design files and the reference suite. `read_junit` and `score` read the junit XM
 own runner writes; `run_bench` clones the design's start commit into a history-less copy, puts
 the design in it, runs `<styre> run` through the real runner, resets the tree to the committed
 work, runs the reference suite, and records one `result.json` per setup.
+
+The copy lives in a temporary directory outside `--out` and the design directory: pi has no
+sandbox, and a builder that searched upward once read an earlier run's notes. The result
+directory keeps the finished work as `repo.bundle` (`git clone repo.bundle`) and the run's
+`.styre/`; the copy itself is deleted.
 """
 from __future__ import annotations
 
@@ -19,6 +24,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 import xml.etree.ElementTree as ET
 from datetime import datetime
@@ -331,6 +337,15 @@ def usage_of(summary):
     return usage
 
 
+def keep_run(repo, result_dir):
+    """Keep what a finished copy is read for: its commits as `repo.bundle` and its `.styre/`."""
+    if (repo / ".git").is_dir():
+        _git(repo, "bundle", "create", "--quiet", str(result_dir / "repo.bundle"), "--all",
+             check=False)
+    if (repo / ".styre").is_dir():
+        shutil.copytree(repo / ".styre", result_dir / ".styre", symlinks=True)
+
+
 def run_bench(design_dir, variant, styre_cmd, out, pi_config=None, label=None,
               cap_hours=CAP_HOURS):
     """Run one benchmark design end to end and write `result.json`. Returns the result dict.
@@ -353,7 +368,8 @@ def run_bench(design_dir, variant, styre_cmd, out, pi_config=None, label=None,
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     result_dir = out / f"{design_dir.name}-{variant}-{stamp}"
     result_dir.mkdir(parents=True, exist_ok=True)
-    repo = result_dir / "repo"
+    work = Path(tempfile.mkdtemp(prefix="styre-bench-"))
+    repo = work / "repo"
     junit_dir = result_dir / "junit"
     setup_log = result_dir / "setup.log"
     styre_log = result_dir / "styre.log"
@@ -369,7 +385,7 @@ def run_bench(design_dir, variant, styre_cmd, out, pi_config=None, label=None,
         "parts": None, "usage": None,
     }
     try:
-        clean_copy(design["repo"], result_dir, design["start"])
+        clean_copy(design["repo"], work, design["start"])
         copy_design(design, design_dir, repo, variant)
         result["error"] = do_setup(design, repo, setup_log)
         if result["error"] is None:
@@ -399,6 +415,9 @@ def run_bench(design_dir, variant, styre_cmd, out, pi_config=None, label=None,
 
         traceback.print_exc()
         result["error"] = result.get("error") or f"{type(e).__name__}: {e}"
+    finally:
+        keep_run(repo, result_dir)
+        shutil.rmtree(work, ignore_errors=True)
     (result_dir / "result.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     result["_dir"] = str(result_dir / "result.json")
     return result

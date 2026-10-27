@@ -65,6 +65,11 @@ rest of the step.
   in styre's prompts and tools, but it cannot tell two models apart.
 - The warnings were written from the same runs they are scored on. A good score shows a
   warning describes its own history. A bad score even in-sample is the signal worth acting on.
+- The benchmark first cloned each run inside its results folder. Stuck on a rounding rule,
+  a builder grepped upward, found an earlier run's `docs/decisions.md` for the same design
+  and used its answer: that design's score (99 of 106 against 75) could not be counted. pi
+  has no sandbox, so a run must have no path that leads to other runs or the held-out suite:
+  `bench.py` now builds in a temporary directory and keeps only a git bundle and `.styre/`.
 
 ## What was built and removed
 
