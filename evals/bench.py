@@ -431,7 +431,9 @@ def run_bench(design_dir, variant, styre_cmd, out, pi_config=None, label=None,
             plan_id = latest_id(repo)
             result["frontier"] = (frontier_of(collect(RunDir(repo / ".styre" / "runs" /
                                                        plan_id))) if plan_id else None)
-            if rc:
+            if rc is None:
+                result["error"] = f"styre plan stopped at the {cap_hours:g} h cap"
+            elif rc != 0:
                 line = last_output_line(plan_log) or f"exit {rc}"
                 result["error"] = f"styre plan failed: {line}"
         if result["error"] is None:

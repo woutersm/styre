@@ -616,3 +616,24 @@ def test_a_run_inside_the_cap_is_not_capped(tmp_path):
     rc, _, capped = bench.do_run({"design_path": "d.md"}, tmp_path,
                                  f"{sys.executable} -c pass", tmp_path, tmp_path / "s.log")
     assert (rc, capped) == (0, False)
+
+
+def test_bench_plan_at_the_cap_records_it_and_skips_the_run(monkeypatch, tmp_path, repo,
+                                                           fake_pi, fake_claude):
+    pi_config = make_pi_config(tmp_path)
+    reply = tmp_path / "planned.json"
+    reply.write_text(claude_reply_json(planned_design()), encoding="utf-8")
+    bench_env(monkeypatch, tmp_path, fake_pi, fake_claude, pi_config, "ok", reply)
+    monkeypatch.setenv("FAKE_CLAUDE_SLEEP", "30")
+    design_dir = make_design_dir(tmp_path, repo)
+    design = json.loads((design_dir / "bench.json").read_text(encoding="utf-8"))
+    design["repo"] = str(repo)
+    (design_dir / "bench.json").write_text(json.dumps(design), encoding="utf-8")
+    out = bench.run_bench(design_dir, "brief", f"{sys.executable} -m styre",
+                          tmp_path / "results", pi_config=str(pi_config), plan=True,
+                          cap_hours=2 / 3600)
+    result = json.loads(Path(out["_dir"]).read_text(encoding="utf-8"))
+    assert result["planned"] is False
+    assert result["error"] == "styre plan stopped at the 0.000555556 h cap"
+    assert result["run_id"] is None and result["hours"] is None  # the brief was not run
+

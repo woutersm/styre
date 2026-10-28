@@ -90,7 +90,7 @@ def cmd_plan(args):
     result = claude.call("planner", prompt, PLAN_SCHEMA, ["Read", "Grep", "Glob"],
                          cwd=Path.cwd(), timeline=tl, log_dir=run_dir)
     planned = None
-    usage = result.usage
+    tokens_in, tokens_out = result.usage.tokens_in, result.usage.tokens_out
     if result.error is not None:
         tl.event("run_end", exit_code=1, stopped=result.error)
         return 1
@@ -105,7 +105,8 @@ def cmd_plan(args):
         retry = claude.call("planner", prompt + "\n\nYour design was refused:\n" +
                             "\n".join(problems), PLAN_SCHEMA, ["Read", "Grep", "Glob"],
                             cwd=Path.cwd(), timeline=tl, log_dir=run_dir)
-        usage = retry.usage
+        tokens_in += retry.usage.tokens_in
+        tokens_out += retry.usage.tokens_out
         if retry.error is not None:
             problems = [retry.error]
         else:
@@ -128,7 +129,7 @@ def cmd_plan(args):
     print(design_path)
     for note in advisories(planned, parse_phases(planned), design_path.name, root=Path.cwd()):
         print(f"  ⚠ {note}")
-    print(f"Planner used {usage.tokens_in:,} tokens in, {usage.tokens_out:,} out.")
+    print(f"Planner used {tokens_in:,} tokens in, {tokens_out:,} out.")
     print(f"Read it: git show; run it: styre run {design_path}")
     return 0
 

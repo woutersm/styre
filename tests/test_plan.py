@@ -123,6 +123,20 @@ def test_bad_first_answer_gets_one_retry_then_fails(tmp_path, monkeypatch, fake_
     assert "dropped the brief's line" in stdins[1]["stdin"]
 
 
+def test_tokens_printed_are_both_calls_summed(tmp_path, monkeypatch, fake_claude, plan_repo):
+    bad = DESIGN.replace("Preamble every phase needs.", "something else entirely")
+    replies = tmp_path / "replies"
+    replies.mkdir()
+    for n, design, tokens in (("1", bad, 1000), ("2", planned_design(), 2000)):
+        (replies / f"{n}.json").write_text(json.dumps(
+            {"type": "result", "is_error": False, "structured_output": {"design": design},
+             "usage": {"input_tokens": tokens, "output_tokens": tokens // 10}}),
+            encoding="utf-8")
+    rc, out, err = run_plan(plan_repo, fake_claude, tmp_path, monkeypatch, reply_dir=replies)
+    assert rc == 0, err
+    assert "Planner used 3,000 tokens in, 300 out." in out
+
+
 def test_second_bad_answer_fails_cleanly(tmp_path, monkeypatch, fake_claude, plan_repo):
     bad = DESIGN.replace("Preamble every phase needs.", "something else entirely")
     replies = tmp_path / "replies"
