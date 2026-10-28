@@ -353,7 +353,7 @@ def test_bench_plan_plans_then_runs(monkeypatch, tmp_path, repo, fake_pi, fake_c
     assert result["committed"] == 2  # the run ran the design and committed every phase
     assert (result_dir / "plan.log").exists()
     assert "tokens in" in (result_dir / "plan.log").read_text(encoding="utf-8")  # the planner's usage
-    root = result_dir / "repo" / ".styre" / "runs"
+    root = result_dir / ".styre" / "runs"  # a result keeps .styre/ beside repo.bundle
     timeline = (root / result["run_id"] / "timeline.jsonl").read_text(encoding="utf-8")
     events = [json.loads(line) for line in timeline.splitlines()]
     start = [e for e in events if e["event"] == "run_start"][0]
