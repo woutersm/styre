@@ -5,6 +5,9 @@ lives in `CLAUDE.md`; this file is the list, not the record.
 
 ## Open
 
+- [ ] **An exit criterion that wraps loses its continuation lines.** `parse_phases` takes each
+      `- ` line of `### Exit criteria` alone, so a criterion wrapped at 100 columns reaches the
+      criteria list cut mid-sentence (the phase text itself is whole). Join indented lines.
 - [ ] **A time limit per bash call** (~10 min), enforced by styre, not left to the agent.
       A hanging `uv run python` probe once cost 2 hours before the idle timeout fired.
 - [ ] **`check`'s new-dependency warning misreads names as packages.** It has flagged a

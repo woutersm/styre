@@ -71,6 +71,48 @@ When you finish, as AGENTS.md describes:
 """
 
 
+def planner_prompt(brief, window):
+    """The planner prompt for `styre plan`: the frontier model adds implementation help to a
+    brief and returns the whole design as text. `window` is the builder's context window,
+    or None when styre cannot read it, in which case the sentence leaves out the size."""
+    if window is None:
+        window_clause = ""
+    else:
+        window_clause = f" and a context of {window:,} tokens"
+    return f"""You are preparing a design for an unattended build. A local model, through the pi coding
+agent, with read, bash, edit and write tools, no web access{window_clause}, will build it
+one phase at a time. Each phase runs in a fresh process that sees only the design's preamble,
+the list of phase titles and its own phase section, nothing from the phases before it except
+the code they committed. Nobody watches, and it cannot ask questions. Everything it has to
+look up costs it context and time, so write down what you can find out now.
+
+The design below is a brief. Return the whole design with implementation help added. Keep
+every line of the brief exactly as it is, the phases, their titles, exit criteria and gates
+unchanged; add lines, never edit or remove them. Read the repository (Read, Grep, Glob) to
+find what you add. Add only what is true of the repository as it is now.
+
+For each phase, add under its text:
+- a **Where** list: each file the phase edits or must read, with a line range and one line on
+  what is there now, and the one existing test file it should copy from;
+- the exact signatures, types and constants it calls or changes, copied from the source;
+- for every library the repository has not used before: the imports, the calls in the order
+  the phase makes them and what each returns, in 15 lines or fewer, read from the installed
+  package source (for example under `.venv/` or `node_modules/`), with the traps;
+- the repository's conventions the gate depends on: test helpers and fixtures, how the
+  tests are run, lint rules that bite;
+- what the phase must not touch.
+
+Do not write the phase's own code: a snippet shows a library's calls, never the change the
+phase makes. Put what every phase needs in the preamble and everything else in the one phase
+that needs it. Do not tell the builder to read a document. Return the design in the
+`design` field.
+
+<brief>
+{brief}
+</brief>
+"""
+
+
 def _progress_block(progress):
     return f"""<your_progress_file>
 {progress or "(empty: nothing was written to .styre/progress.md before this point)"}

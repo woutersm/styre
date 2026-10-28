@@ -65,6 +65,18 @@ def fake_pi(tmp_path):
 
 
 @pytest.fixture
+def fake_claude(tmp_path):
+    """Put the fake claude on PATH, with its log file. Returns the PATH to use."""
+    bindir = tmp_path / "bin"  # outside the repo, so it does not dirty the tree
+    bindir.mkdir(exist_ok=True)
+    exe = bindir / "claude"
+    exe.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{Path(__file__).parent / "fake_claude.py"}" "$@"\n',
+                   encoding="utf-8")
+    exe.chmod(0o755)
+    return f"{bindir}{os.pathsep}{os.environ['PATH']}"
+
+
+@pytest.fixture
 def pi_config(tmp_path):
     """A lean pi config directory, the way preflight insists a real run has one."""
     d = tmp_path / "piconfig"

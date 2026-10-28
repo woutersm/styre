@@ -87,3 +87,58 @@ implementing the nine design steps, plus a CLI in `main()`.
 - Cell formatting reuses `styre.summarize`'s `count`/`table`; cache hit is
   `cache_read/(input+cache_read)` at one decimal over summed tokens, matching `summarize`'s
   `cache_hit_cell`. Prefill/Decode hours are seconds/3600 at one decimal.
+
+## Phase 1: `styre.json` and the Claude Code runner
+
+- A failing `claude -p` can still print a well-formed result object (`is_error` true,
+  `structured_output` null, non-zero exit — the budget fixture is exactly that). The runner
+  therefore parses stdout before judging the exit code, so the quoted error wins over
+  "failed with exit code N"; a non-zero exit that prints no JSON reports the exit code, a
+  clean exit with unparsable output reports "not JSON".
+- The timeout is a plain deadline (`communicate(timeout=...)` plus `kill_tree`), not pi's
+  idle watchdog, because `claude -p` prints nothing until it ends; after the kill, draining
+  the pipes also catches `OSError` — the child's pipes can already be dead.
+- The developer's machine has a real `claude` on `PATH`, so every test must put the fake
+  bin *first* on `PATH` (the `fake_claude` fixture returns that string; each test applies it
+  itself) and clear `FAKE_CLAUDE_*` variables first. Tests that forgot this were flaky:
+  the real binary answered in ~3.6s, just inside a 5s deadline.
+
+## Phase 2: `styre plan`
+
+- **The "brief untouched" test asserts the file equals the original brief, not the bad answer.**
+  `cmd_plan` never writes the file after a failed retry (the `problems` branch returns first),
+  so a test that feeds two bad answers must expect the brief back. The first version of
+  `test_second_bad_answer_fails_cleanly` asserted the file held the bad answer and failed on
+  that.
+- **A retry answer that is byte-identical to the file commits nothing.** `git commit` exits
+  1 with empty output when staging changed nothing, so `test_retry_prompt_after_a_gate_change`
+  had its second reply be the genuinely-planned design (added lines), not the unchanged brief.
+  The test also got a unique `replace` needle for *Phase 2's* gate — the first occurrence of
+  the fence in the design belongs to Phase 1 — with a `changed != brief` guard.
+- **The retry prompt is the first prompt verbatim plus "Your design was refused:" and the
+  problem sentences**, one per line. Tests check the first prompt is a substring of the
+  retry stdin.
+- `planner.problems` compares gate and criteria *lists* in order, compares advisories as
+  strings, and stops after a phase-count mismatch (the per-phase checks could not line up).
+  The "dropped line" sentence names the place: `Phase n` for a phase's
+  body, the preamble for one in the shared text.
+- Docs: `README.md` gained a `plan` row in the Commands table and a section on what it does
+  and commits; `CLAUDE.md`'s Files table names `styre/claude.py`, `styre/settings.py`,
+  `styre/planner.py` and `tests/fake_claude.py`, and the `cli.py` row names `plan`.
+
+## Phase 3: Model calls in the report, and `bench.py --plan`
+
+- `## Model calls` summarizes the run's `model_call` timeline events (written by `claude.call`
+  in Phase 1) rather than a new usage type; the table is one row per role plus a total, and a
+  run without `model_call` events omits the section entirely. A phase-less run (a `styre plan`
+  run: `run_start kind: "plan"`, no phases) skips its phase/where-to-look sections in
+  `render()` and `where_to_look()` so it summarizes without an error.
+- In `bench.py --plan`, `frontier` is the sums of the **plan run's** `model_call` events
+  (found via the copy's `.styre/latest.txt` after `do_plan`), not the `styre run` run's —
+  the run made no frontier calls; `planned` is true only when the plan exited 0, and a
+  failed plan records `error` and skips the run, leaving `hours` the `styre run` time
+  (null when skipped).
+- `bench_report` groups by `config_key` which now includes `planned`, so planned and
+  unplanned results of one setup are two groups (old `result.json` files without the key
+  sort as `None`, i.e. unplanned), and only a group with planned results gets the
+  `Plan h` and `Frontier tok` (tokens in + out) columns, summed in the total row.

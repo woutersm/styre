@@ -202,6 +202,59 @@ TIMELINE = [
 ]
 
 
+def model_call(role="planner", ok=True, tokens_in=100, cached_in=80, tokens_out=10,
+               thinking=3, cost=0.01, seconds=1.0, error=None):
+    return {"ts": "t", "event": "model_call", "role": role, "model": "claude-opus-5-5",
+            "tokens_in": tokens_in, "cached_in": cached_in, "cache_write": 0, "tokens_out": tokens_out,
+            "thinking": thinking, "cost_usd": cost, "turns": 1, "seconds": seconds,
+            "ok": ok, "error": error}
+
+
+MODEL_CALL_TIMELINE = [
+    {"ts": "2026-09-20T22:00:00+02:00", "event": "run_start", "run": "20260920-220000",
+     "design": "d.md", "branch": "styre/d", "pi_version": "0.85.1", "styre": "0.1.0",
+     "design_sha256": "abc123", "templates": "def456", "phases": 2, "from_phase": 1},
+    model_call(tokens_in=100, cached_in=80, tokens_out=10, thinking=3, cost=0.01, seconds=1.0),
+    model_call(ok=False, tokens_in=200, cached_in=0, tokens_out=5, thinking=0, cost=0.02,
+               seconds=2.0, error="The planner call reported an error: x"),
+    {"ts": "2026-09-20T22:16:00+02:00", "event": "run_end", "exit_code": 0, "committed": 1,
+     "stopped": None},
+]
+
+
+def test_model_calls_are_shown_after_model_time(tmp_path):
+    # Two planner calls, one failed: one row per role with the summed tokens, plus a total.
+    text = render(collect(make_run(tmp_path, timeline=MODEL_CALL_TIMELINE)))
+    section = text.split("## Model calls")[1].split("## ")[0]
+    assert section.index("| planner ") < section.index("| total ")
+    assert "2" in section and "1" in section and "300" in section
+    assert "80" in section and "15" in section and "0.03" in section
+    assert "0.1" in section  # 1 + 2 seconds, to the minute
+    assert section.index("| planner ") < len(section)
+    # the section sits after `## Model time`
+    assert text.index("## Model time") < text.index("## Model calls") < text.index("## Where to look")
+
+
+def test_a_run_without_model_calls_has_no_section(tmp_path):
+    text = render(collect(make_run(tmp_path, timeline=TIMELINE)))
+    assert "## Model calls" not in text
+
+
+def test_a_plan_only_run_summarizes_without_an_error(tmp_path):
+    # run_start kind: "plan" and no phases: header, no phase tables, its Model calls.
+    timeline = [
+        {"ts": "2026-09-20T22:00:00+02:00", "event": "run_start", "run": "20260920-220000",
+         "design": "d.md", "kind": "plan", "styre": "0.1.0"},
+        model_call(tokens_in=1234, cached_in=1000, tokens_out=567, cost=0.16, seconds=6.1),
+        {"ts": "2026-09-20T22:01:00+02:00", "event": "run_end", "exit_code": 0,
+         "stopped": None},
+    ]
+    text = render(collect(make_run(tmp_path, timeline=timeline, phases=())))
+    assert "# Run 20260920-220000" in text and "design d.md" in text
+    assert "## Model calls" in text and "1,234" in text and "0.16" in text
+    assert "## Phases" not in text and "## Model time" not in text
+
+
 def test_the_timeline_drives_the_phase_table(tmp_path):
     summary = collect(make_run(tmp_path, timeline=TIMELINE))
     phase = summary.phases[0]

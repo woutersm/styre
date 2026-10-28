@@ -280,6 +280,60 @@ def do_run(design, repo, styre_cmd, config_dir, styre_log, cap_hours=CAP_HOURS):
     return rc, round((time.time() - started) / 3600, 2), capped
 
 
+def do_plan(design, repo, styre_cmd, config_dir, plan_log, cap_hours=CAP_HOURS):
+    """Run `<styre> plan <design_path>` in the copy, at most `cap_hours`. Returns the exit
+    code, or None when the call hit the cap. The plan's own time is the run's `plan_hours`."""
+    env = {**os.environ, "STYRE_PI_CONFIG_DIR": str(config_dir), "NO_COLOR": "1"}
+    cmd = shlex.split(styre_cmd) + ["plan", design["design_path"]]
+    plan_log.parent.mkdir(parents=True, exist_ok=True)
+    started = time.time()
+    with open(plan_log, "a", encoding="utf-8") as log:
+        log.write(f"$ {' '.join(cmd)}\n")
+        log.flush()
+        p = subprocess.Popen(cmd, cwd=str(repo), env=env, stdin=subprocess.DEVNULL,
+                             stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+        try:
+            rc = p.wait(timeout=cap_hours * 3600)
+        except subprocess.TimeoutExpired:
+            kill_tree(p.pid)
+            p.wait()
+            rc = None
+            log.write(f"\n[bench] plan stopped at the {cap_hours:g} h cap\n")
+    return rc, round((time.time() - started) / 3600, 2)
+
+
+def last_output_line(log):
+    """The last non-blank line of a log file, or None when it has none."""
+    try:
+        lines = [line.rstrip() for line in log.read_text(encoding="utf-8").splitlines()
+                 if line.strip()]
+    except OSError:
+        return None
+    return lines[-1] if lines else None
+
+
+def latest_id(repo):
+    """The run id `.styre/latest.txt` names in a copy, or None when the file has none."""
+    path = repo / ".styre" / "latest.txt"
+    if not path.exists():
+        return None
+    name = path.read_text(encoding="utf-8").strip()
+    return name or None
+
+
+def frontier_of(summary):
+    """The `frontier` block: the sums of the plan run's `model_call` events, or None when
+    the plan made no frontier call. `tokens_in` and `tokens_out` are what the report's
+    `Frontier tok` column shows together."""
+    calls = summary.model_calls
+    if not calls:
+        return None
+    return {"calls": len(calls),
+            "tokens_in": sum(c.get("tokens_in") or 0 for c in calls),
+            "tokens_out": sum(c.get("tokens_out") or 0 for c in calls),
+            "cost_usd": sum(c.get("cost_usd") or 0 for c in calls)}
+
+
 def read_run(summary, run_root):
     """`committed`, `stopped` and `served` from one collected run, each None when absent."""
     from styre.summarize import read_events
@@ -347,11 +401,12 @@ def keep_run(repo, result_dir):
 
 
 def run_bench(design_dir, variant, styre_cmd, out, pi_config=None, label=None,
-              cap_hours=CAP_HOURS):
+              cap_hours=CAP_HOURS, plan=False):
     """Run one benchmark design end to end and write `result.json`. Returns the result dict.
 
     `pi_config` (the pi config directory the run uses) and `label` (free text for what the
-    config cannot show) default to the values in `bench.json`, or None. Keys a failed run
+    config cannot show) default to the values in `bench.json`, or None. With `plan`, the
+    design is first planned with `<styre> plan` and run as planned. Keys a failed run
     never reached stay null.
     """
     from styre.rundir import RunDir
@@ -372,12 +427,14 @@ def run_bench(design_dir, variant, styre_cmd, out, pi_config=None, label=None,
     repo = work / "repo"
     junit_dir = result_dir / "junit"
     setup_log = result_dir / "setup.log"
+    plan_log = result_dir / "plan.log"
     styre_log = result_dir / "styre.log"
     result = {
         "design": design_dir.name, "variant": variant, "styre": None,
         "label": design.get("label"), "setup": read_setup(config_dir),
         "model": read_model(config_dir), "served": None,
         "start": design.get("start"), "started": datetime.now().astimezone().isoformat(),
+        "planned": False, "plan_hours": None, "frontier": None,
         "hours": None, "exit_code": None, "run_id": None, "phases": design.get("phases"),
         "committed": None, "stopped": None, "error": None, "cap_hours": cap_hours,
         "capped": False,
@@ -388,6 +445,20 @@ def run_bench(design_dir, variant, styre_cmd, out, pi_config=None, label=None,
         clean_copy(design["repo"], work, design["start"])
         copy_design(design, design_dir, repo, variant)
         result["error"] = do_setup(design, repo, setup_log)
+        if result["error"] is None and plan:
+            result["styre"] = styre_version(styre_cmd, repo)
+            rc, plan_hours = do_plan(design, repo, styre_cmd, config_dir, plan_log,
+                                     cap_hours)
+            result["plan_hours"] = plan_hours
+            result["planned"] = rc == 0
+            plan_id = latest_id(repo)
+            result["frontier"] = (frontier_of(collect(RunDir(repo / ".styre" / "runs" /
+                                                       plan_id))) if plan_id else None)
+            if rc is None:
+                result["error"] = f"styre plan stopped at the {cap_hours:g} h cap"
+            elif rc != 0:
+                line = last_output_line(plan_log) or f"exit {rc}"
+                result["error"] = f"styre plan failed: {line}"
         if result["error"] is None:
             result["styre"] = styre_version(styre_cmd, repo)
             rc, hours, capped = do_run(design, repo, styre_cmd, config_dir, styre_log,
@@ -438,10 +509,14 @@ def main(argv=None):
                     help="results root (default <design-dir>/../results)")
     ap.add_argument("--cap-hours", type=float, default=CAP_HOURS,
                     help=f"stop the styre run after this many hours (default {CAP_HOURS:g})")
+    ap.add_argument("--plan", action="store_true",
+                    help="run `<styre> plan` on the design before the run, and record the "
+                         "plan's time and frontier tokens in the result")
     args = ap.parse_args(sys.argv[1:] if argv is None else list(argv))
     out = args.out or str(Path(args.design_dir).resolve().parent / DEFAULT_OUT_NAME)
     result = run_bench(args.design_dir, args.variant, args.styre, out,
-                       pi_config=args.pi_config, label=args.label, cap_hours=args.cap_hours)
+                       pi_config=args.pi_config, label=args.label, cap_hours=args.cap_hours,
+                       plan=args.plan)
     new, keep = result["new"] or [None, None], result["keep"] or [None, None]
     print(f"{result['design']} {result['variant']}: new {new[0]}/{new[1]}, "
           f"keep {keep[0]}/{keep[1]}, {result['committed']}/{result['phases']} phases "

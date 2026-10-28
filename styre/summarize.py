@@ -222,6 +222,7 @@ class Run:
     phases: list[Phase] = field(default_factory=list)
     starts: list[dict] = field(default_factory=list)  # one per invocation: a resume appends
     ends: list[dict] = field(default_factory=list)
+    model_calls: list[dict] = field(default_factory=list)  # each `model_call` event, in order
     missing: list[str] = field(default_factory=list)
 
     @property
@@ -252,6 +253,8 @@ def read_timeline(run, summary):
             summary.starts.append(e)
         elif kind == "run_end":
             summary.ends.append(e)
+        elif kind == "model_call":
+            summary.model_calls.append(e)
         elif n is None:
             continue
         elif kind == "pi_end":
@@ -540,8 +543,51 @@ def model_time_table(summary):
             "the host managed on this workload, not its peak."]
 
 
+def cost_cell(cost):
+    """A cost column to two places; `$0.00` is a real answer, so it is never a dash."""
+    return f"${cost:,.2f}"
+
+
+def model_call_lines(summary):
+    """The `## Model calls` section: the frontier roles' `claude -p` calls, one row per role.
+
+    Written only when the timeline has `model_call` events — a run with none has no
+    section. A role's failed calls are counted in the row, not dropped: their tokens are
+    what the failure cost, and the row's total is what the role spent.
+    """
+    roles = {}
+    for e in summary.model_calls:
+        roles.setdefault(e.get("role") or "?", []).append(e)
+    if not roles:
+        return []
+
+    def row(label, calls):
+        failed = sum(1 for c in calls if not c.get("ok"))
+        tokens_in = sum(c.get("tokens_in") or 0 for c in calls)
+        cached = sum(c.get("cached_in") or 0 for c in calls)
+        tokens_out = sum(c.get("tokens_out") or 0 for c in calls)
+        thinking = sum(c.get("thinking") or 0 for c in calls)
+        cost = sum(c.get("cost_usd") or 0 for c in calls)
+        seconds = sum(c.get("seconds") or 0 for c in calls)
+        return [label, len(calls), failed, count(tokens_in), count(cached), count(tokens_out),
+                count(thinking), cost_cell(cost), minutes(seconds, bool(calls))]
+
+    rows = [row(role, calls) for role, calls in roles.items()]
+    rows.append(row("total", summary.model_calls))
+    return ["## Model calls", "",
+            table(["Role", "Calls", "Failed", "Tokens in", "Cached in", "Tokens out",
+                   "Thinking", "Cost", "Min"], rows),
+            "",
+            "One row per role the run asked the frontier model for, in the order it was "
+            "first called. Tokens in is input plus both kinds of cache write and read, as the "
+            "provider reported it; a failed call's tokens stay in the sums, because that is "
+            "what the failure cost. The minutes are the run's wall-clock seconds per call."]
+
+
 def where_to_look(summary):
     """The part worth reading first: everything that did not go straight through."""
+    if not summary.phases:
+        return []
     out = ["## Where to look", ""]
     for p in summary.phases:
         if not p.problems:
@@ -591,9 +637,15 @@ def where_to_look(summary):
 
 
 def render(summary):
-    """The whole summary as text. Markdown, but meant to read fine in a terminal."""
-    blocks = [header_lines(summary), phase_table(summary), model_time_table(summary),
-              where_to_look(summary)]
+    """The whole summary as text. Markdown, but meant to read fine in a terminal.
+
+    A run without phases — the run of a `styre plan` — keeps its header and its
+    `## Model calls`, but has no phase tables.
+    """
+    blocks = [header_lines(summary)]
+    if summary.phases:
+        blocks += [phase_table(summary), model_time_table(summary)]
+    blocks += [model_call_lines(summary), where_to_look(summary)]
     return "\n\n".join("\n".join(b).strip("\n") for b in blocks if b).rstrip() + "\n"
 
 

@@ -58,11 +58,14 @@ def results_from(path):
 
 
 def config_key(result):
-    """The group a result belongs to: styre version, variant, setup name, model and label."""
+    """The group a result belongs to: styre version, variant, planned, setup name, model and
+    label. `planned` is in the key, because planned and unplanned results of one setup have
+    different columns and are not comparable in one table."""
     m = result.get("model") or {}
     setup = (result.get("setup") or {}).get("name")
-    return (result.get("styre"), result.get("variant"), setup, m.get("provider"), m.get("id"),
-            m.get("context_window"), m.get("thinking"), result.get("label"))
+    return (result.get("styre"), result.get("variant"), result.get("planned"), setup,
+            m.get("provider"), m.get("id"), m.get("context_window"), m.get("thinking"),
+            result.get("label"))
 
 
 def sort_key(key):
@@ -73,12 +76,14 @@ def sort_key(key):
 def config_name(key):
     """The heading for a configuration, leaving out what is null, such as
     `styre 0.25.0, brief, splash/mlx-community/Qwen3.8-27B-4bit, 120,000 ctx, splash 0.4`."""
-    styre, variant, setup, provider, model_id, ctx, _thinking, label = key
+    styre, variant, planned, setup, provider, model_id, ctx, _thinking, label = key
     parts = []
     if styre:
         parts.append(f"styre {styre}")
     if variant:
         parts.append(variant)
+    if planned:
+        parts.append("planned")
     if setup:
         parts.append(setup)
     if provider and model_id:
@@ -136,12 +141,23 @@ def seconds_cell(seconds):
     return f"{seconds / 3600:.1f}"
 
 
-def result_row(result):
+def frontier_cells(result):
+    """The `Plan h` and `Frontier tok` cells (tokens in plus out) for one result."""
+    plan_h = hours_cell(result.get("plan_hours"))
+    frontier = result.get("frontier")
+    if not frontier:
+        return [plan_h, "-"]
+    return [plan_h, count((frontier.get("tokens_in") or 0) + (frontier.get("tokens_out") or 0))]
+
+
+def result_row(result, planned=False):
     """The table row for one result; an error sits in the New cell in place of the numbers."""
     u = result.get("usage")
     row = [result.get("design"), result.get("started")]
     if result.get("error"):
         row += [result["error"]] + ["-"] * (len(HEADER) - 3)
+        if planned:
+            row += ["-", "-"]  # the frontier columns the failed result never reached
         return row
     row += [pair_cell(result.get("new")), plain_pair_cell(result.get("keep")),
             f"{result.get('committed')}/{result.get('phases')}"
@@ -151,6 +167,8 @@ def result_row(result):
     row += [seconds_cell(u.get("prefill_seconds") if u else None),
             seconds_cell(u.get("decode_seconds") if u else None)]
     row += rate_cells([u])
+    if planned:
+        row += frontier_cells(result)
     return row
 
 
@@ -181,7 +199,7 @@ def sum_seconds_cell(values):
     return seconds_cell(seconds)
 
 
-def total_row(results):
+def total_row(results, planned=False):
     """The table's total row: sums with the overall percentage; a failed result adds nothing."""
     ok = [r for r in results if not r.get("error")]
     new_p = sum((r.get("new") or [0, 0])[0] for r in ok if r.get("new"))
@@ -199,6 +217,11 @@ def total_row(results):
     row += [sum_seconds_cell([u.get("prefill_seconds") if u else None for u in usages]),
             sum_seconds_cell([u.get("decode_seconds") if u else None for u in usages])]
     row += rate_cells(usages)
+    if planned:
+        plan_h = sum(r.get("plan_hours") or 0 for r in ok)
+        tokens = sum((r.get("frontier") or {}).get("tokens_in", 0)
+                     + (r.get("frontier") or {}).get("tokens_out", 0) for r in ok)
+        row += [f"{plan_h:.2f}", count(tokens)]
     return row
 
 
@@ -279,8 +302,12 @@ def render(paths):
             s = served_line(result)
             if s:
                 lines += [s, ""]
-        rows = [result_row(r) for _, r in group] + [total_row([r for _, r in group])]
-        lines += [table(HEADER, rows), ""]
+        # `planned` is in the key: a group with planned results gets the frontier columns.
+        planned = any(r.get("planned") for _p, r in group)
+        header = list(HEADER) + (["Plan h", "Frontier tok"] if planned else [])
+        rows = [result_row(r, planned) for _, r in group] + [
+            total_row([r for _, r in group], planned)]
+        lines += [table(header, rows), ""]
         stops = stops_lines([r for _, r in group])
         if stops:
             lines += ["Stops:"] + stops + [""]

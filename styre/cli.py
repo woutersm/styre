@@ -1,18 +1,20 @@
-"""Command line interface: the `design`, `check`, `run` and `summarize` subcommands."""
+"""Command line interface: the `design`, `check`, `plan`, `run` and `summarize` subcommands."""
 import argparse
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
-from styre import __version__
-from styre.config import DEFAULT_GATE_TIMEOUT, DEFAULT_RETRIES, DEFAULT_TIMEOUT, RunOptions
+from styre import __version__, claude, planner
+from styre.config import DEFAULT_GATE_TIMEOUT, DEFAULT_RETRIES, DEFAULT_TIMEOUT, RunOptions, context_window
 from styre.design import advisories, describe, parse_phases, phase_context, validate
-from styre.gitops import not_at_root
-from styre.prompts import build_prompt
-from styre.rundir import RUNS, resolve
+from styre.gitops import add_excludes, commit, is_dirty, not_at_root, stage_all
+from styre.planner import PLAN_SCHEMA
+from styre.prompts import build_prompt, planner_prompt
+from styre.rundir import RUNS, new_run, resolve
 from styre.runner import PreflightError, context_budget, orchestrate, preflight
 from styre.summarize import collect, compare, history_lines, repo_history, summarize
+from styre.timeline import Timeline
 
 EXAMPLES = """examples:
   styre design "CSV export"            write a design with Claude Code (/styre-design)
@@ -57,6 +59,79 @@ def cmd_design(args):
         sys.exit("Claude Code ('claude') is not on PATH: https://claude.com/claude-code")
     prompt = " ".join(["/styre-design", *args.idea])
     return subprocess.run([claude, prompt]).returncode
+
+
+def cmd_plan(args):
+    """Ask Claude to add implementation help to a brief, then commit the planned design.
+
+    styre checks the answer kept every line of the brief, writes it over the brief file,
+    and commits it. The person reads the change with `git show` and runs `styre run` when
+    they agree. A failed call or a brief the answer changed leaves the tree untouched.
+    """
+    if (root := not_at_root()) is not None:
+        print(f"Run styre from the repository root, not a subdirectory:\n  cd {root}",
+              file=sys.stderr)
+        return 1
+    if is_dirty():
+        sys.exit("Working tree is not clean. Commit or stash first (plan makes one commit).")
+    brief, _phases = load_design(args.design)
+    if (problems := validate(_phases)):
+        sys.exit("Fix the brief first (run 'styre check'):\n  " + "\n  ".join(problems))
+
+    design_path = Path(args.design)
+    add_excludes()
+    run = new_run()
+    tl = Timeline(run.timeline)
+    tl.event("run_start", **{"run": run.id, "styre": __version__,
+               "design": str(design_path), "kind": "plan"})
+    run_dir = run.root / "logs"
+
+    prompt = planner_prompt(brief, context_window())
+    result = claude.call("planner", prompt, PLAN_SCHEMA, ["Read", "Grep", "Glob"],
+                         cwd=Path.cwd(), timeline=tl, log_dir=run_dir)
+    planned = None
+    tokens_in, tokens_out = result.usage.tokens_in, result.usage.tokens_out
+    if result.error is not None:
+        tl.event("run_end", exit_code=1, stopped=result.error)
+        return 1
+    planned = (result.output or {}).get("design")
+    if not isinstance(planned, str):
+        tl.event("run_end", exit_code=1, stopped="The planner returned no design text.")
+        print("The planner returned no design text.")
+        return 1
+
+    problems = planner.problems(brief, planned)
+    if problems:
+        retry = claude.call("planner", prompt + "\n\nYour design was refused:\n" +
+                            "\n".join(problems), PLAN_SCHEMA, ["Read", "Grep", "Glob"],
+                            cwd=Path.cwd(), timeline=tl, log_dir=run_dir)
+        tokens_in += retry.usage.tokens_in
+        tokens_out += retry.usage.tokens_out
+        if retry.error is not None:
+            problems = [retry.error]
+        else:
+            planned = (retry.output or {}).get("design")
+            problems = planner.problems(brief, planned) if isinstance(planned, str) else [
+                "The planner returned no design text."]
+    if problems:
+        for sentence in problems:
+            print(sentence)
+        tl.event("run_end", exit_code=1, stopped=problems[0])
+        return 1
+
+    design_path.write_text(planned, encoding="utf-8")
+    stage_all()
+    stem = design_path.name.rsplit(".", 1)[0]
+    if commit(f"Plan: {stem}") != 0:
+        tl.event("run_end", exit_code=1, stopped="The planned design could not be committed.")
+        return 1
+    tl.event("run_end", exit_code=0, stopped=None)
+    print(design_path)
+    for note in advisories(planned, parse_phases(planned), design_path.name, root=Path.cwd()):
+        print(f"  ⚠ {note}")
+    print(f"Planner used {tokens_in:,} tokens in, {tokens_out:,} out.")
+    print(f"Read it: git show; run it: styre run {design_path}")
+    return 0
 
 
 def cmd_check(args):
@@ -154,6 +229,11 @@ def build_parser():
         "check", help="validate the design and print its phases, gates and prompt sizes")
     check.add_argument("design", help="the design document")
     check.set_defaults(func=cmd_check)
+
+    plan = sub.add_parser(
+        "plan", help="add implementation help to a brief with Claude, and commit it")
+    plan.add_argument("design", help="the brief design document")
+    plan.set_defaults(func=cmd_plan)
 
     run = sub.add_parser("run", help="run the design, one commit per phase")
     run.add_argument("design", help="the design document")

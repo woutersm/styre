@@ -129,9 +129,27 @@ in Claude Code, in the repository you want built (see [Using it with Claude Code
 format below. Then, from the root of that repository:
 
 ```sh
+styre plan docs/my-design.md     # ask Claude to add implementation help; one commit, you review it
 styre check docs/my-design.md    # validate; print phases, gates, prompt sizes and warnings
 styre run docs/my-design.md      # run every phase, one commit each
 ```
+
+## `styre plan` — the design Claude completes for a local model
+
+A design written by a frontier model tells the phases what to build, but a local model building
+unattended also needs the help a frontier model would not bother writing: which files and lines
+the phase touches, the signatures it calls, what to copy from, the traps. `styre plan
+<design.md>` sends the design to `claude -p` with read-only tools (Read, Grep, Glob), asks it to
+return the whole design with that help added, and then styre checks the answer itself: it still
+validates, the phases, their titles, gates and exit criteria are unchanged, every line of the
+brief is still there (the help is additive only), and no new warning. An answer that drops or
+edits the brief is sent back once with the list of what broke; still broken, and the command
+exits 1 with the brief untouched.
+
+A good answer replaces the design file and becomes one commit, `Plan: <design name>`, on your
+current branch. The command prints the design's remaining warnings and the planner's tokens in
+and out. Read it with `git show` and, when you agree, `styre run <design.md>` runs it exactly
+as it runs any design.
 
 After the run:
 
@@ -209,6 +227,7 @@ commits is `AGENTS.md`.
 | --- | --- |
 | `styre design [idea]` | Opens interactive Claude Code on `/styre-design` in this repository. A launcher: you do the interview and approve the design; styre calls no model |
 | `styre check <design>` | Validates the design, prints each phase's gate and prompt size, and warns about designs that tend to fail |
+| `styre plan <design>` | Asks Claude to add the implementation help a local model needs, checks the answer kept the brief intact, and commits it (`Plan: <name>`) |
 | `styre run <design>` | Runs it. Options include `--from-phase N` to resume, `--retries`, `--timeout` in seconds of silence with a default of 7200, `--gate-timeout`, `--branch` and `--quiet`. `--help` lists them all. |
 | `styre summarize [run]` | Prints the report for the latest run, or for the one named |
 
