@@ -11,6 +11,15 @@ phase is done.
 > Status: alpha. Used on macOS with local 27B models behind an OpenAI-compatible API, and
 > checked against the event stream and agent tools of pi 1.0.4. Other setups are untested.
 
+## v2
+
+styre v2 orchestrates a local coding agent with Claude Code as planner, advisor and
+reviewer. styre commits a phase only when its gate passes: your build, lint and tests.
+
+> v2 is in progress. The planner (`styre plan`) is built. The advisor and the reviewer are
+> not. Reference setup: Qwen3.8-27B through pi, and Claude Code on Opus 5.5. The plan and
+> its milestones are in [`docs/v2.md`](docs/v2.md).
+
 ## What it is
 
 styre is a command-line program written in Python. It is not a pi extension and not a Claude
