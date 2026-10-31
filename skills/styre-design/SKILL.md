@@ -16,8 +16,14 @@ context.
 
 ## 1. Interview
 
-Ask one question at a time and wait for the answer. If a brainstorming skill is installed,
-such as `superpowers:brainstorming`, use it for this step. Otherwise ask these yourself:
+The interview is `grill-with-docs`: load the `grilling` and `domain-modeling` skills and run
+it with them. Ask every round with the interactive question tool (`AskUserQuestion` in Claude
+Code), never as a list in prose: up to four questions per call, your recommended answer as
+the first option, with the reason in its description. Write each settled term into
+`GLOSSARY.md` and each hard, surprising trade-off into `docs/adr/` as it settles. These docs
+are the base of the design. Without those skills, ask the same way, one round at a time.
+
+Cover at least:
 
 - What should exist when this is done, and who or what uses it?
 - What must it not do or change?
@@ -26,7 +32,8 @@ such as `superpowers:brainstorming`, use it for this step. Otherwise ask these y
 - Which libraries, APIs or services does it touch, and are they already in the repository?
 
 Stop when you could explain the work to someone who has never seen the repository. Say
-back what you understood in five lines or fewer, and let the owner correct it.
+back what you understood in five lines or fewer, and let the owner correct it. Commit the
+glossary and ADRs on their own before you write the design.
 
 ## 2. Read the repository
 
@@ -56,6 +63,11 @@ Write `docs/<name>-design.md` in the target repository, in the format from the R
 optional preamble, then for each phase a `## Phase N: Title` section with what to build,
 a **Where** list, `### Exit criteria` and a `### Gate` code block. Keep the preamble to
 what every phase needs, because every phase's prompt carries it.
+
+When the interview wrote a glossary and ADRs, build the design from them. Use the glossary's
+terms, and make each ADR's decision show in the phase it affects. Copy into the phase text
+what the builder needs from them. Never name `GLOSSARY.md` or an ADR in the design: the
+builder would spend its context reading them.
 
 Check every path, line range, snippet and command in it against the repository.
 
