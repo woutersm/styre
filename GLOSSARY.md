@@ -33,8 +33,8 @@ phase may be committed.
 _Avoid_: check (for the commands), CI
 
 **Acceptance test**:
-A test in a phase's section of the design, for an interface the planned design names or a
-rule the brief states. The planner or the person writes it, and it runs in that phase's gate.
+A test in a phase's section of the design, for an interface or a rule the brief states. The
+planner or the person writes it, and it runs in that phase's gate.
 _Avoid_: reference test (that is the benchmark's), spec test
 
 **Reference test**:
