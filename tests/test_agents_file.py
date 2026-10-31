@@ -50,3 +50,12 @@ def test_the_block_says_to_append_to_the_decision_log_without_reading_it():
     """It is append-only and addressed to nobody in the run. Reading it was the single
     largest tool result of a measured run, ~14,000 tokens in one call, and it only grows."""
     assert "without reading it" in AGENTS_BODY
+
+
+def test_the_block_says_never_to_edit_an_acceptance_test():
+    """The files come from the approved design and styre writes them back before each of its
+    gate runs, so an edit would only cost a fix round — and a contradiction is a BLOCKED.
+    """
+    assert "Never edit one" in AGENTS_BODY
+    assert "contradicts the phase text" in AGENTS_BODY
+    assert "BLOCKED" in AGENTS_BODY

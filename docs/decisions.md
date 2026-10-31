@@ -172,3 +172,17 @@ implementing the nine design steps, plus a CLI in `main()`.
   it. `run_plan` gained a `brief=` keyword that swaps design.md *and commits it* — without
   the commit the dirty-tree preflight refuses the plan call, which was the trap that cost
   the first run of these tests.
+
+## Phase 3: styre writes and restores acceptance tests in a run
+
+- The phase-start write ignores its return value on purpose: a non-empty list there means a
+  resume after a stop, not builder tampering, and logging it as `acceptance_restored` would
+  be wrong. Only the write before each styre gate run (the one in `runner.py`'s loop, just
+  before `verify`) records edits, prints `acceptance tests restored: ...` and emits the
+  timeline event with `paths` (a list), `phase` and `step`.
+- `acceptance.write` uses `open(..., newline="")` for both read and write rather than
+  `Path.read_text/newline`: the project supports Python 3.9, where `read_text` takes no
+  `newline` keyword. That is the only way CRLF content stays byte-for-byte.
+- The builder's `styre_gate` tool (`pi_extensions/`) deliberately does not restore: a
+  builder that edits an acceptance file gets a red styre gate after restoration and a fix
+  round, which is the signal the report (phase 4) will count.

@@ -34,6 +34,10 @@ spend a fix round on it.
   to what your implementation happens to do.
 - Never skip, delete or weaken a test to make it pass; fix the code. Added skip/xfail markers
   and removed tests are rejected automatically.
+- The phase's acceptance tests come from the approved design, and styre writes them back
+  before it runs the gate. Run them, watch them fail, then write the code. Never edit one.
+  If an acceptance test contradicts the phase text, call `styre_finish` with `BLOCKED`,
+  naming the test and the line it contradicts.
 - Keep a .gitignore for build artifacts.
 - Do not run `git commit`, `git checkout`, `git reset` or any other command that moves the
   branch. The orchestrator owns the git history.

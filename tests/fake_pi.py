@@ -167,6 +167,14 @@ def act(action, n):
         write_decisions(n)
         write_state(n)
         return
+    if action == "edit_acceptance":
+        act("ok", n)
+        # Then tampers with the phase's acceptance tests, as a builder might.
+        for p in Path.cwd().rglob("test_accept*"):
+            if p.is_file():
+                with open(p, "a", encoding="utf-8") as f:
+                    f.write("# tampered by the builder\n")
+        return
     # "ok"
     Path(f"work{n}.py").write_text(f"value = {n}\n", encoding="utf-8")
     Path("done.txt").write_text("done\n", encoding="utf-8")

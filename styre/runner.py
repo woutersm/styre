@@ -13,6 +13,7 @@ from datetime import datetime
 from pathlib import Path
 
 from styre import __version__
+from styre.acceptance import write as write_acceptance
 from styre.agents import write_agents_file
 from styre.config import (
     AGENTS,
@@ -289,6 +290,7 @@ def run_phase(ctx, n):
     builder = run.prompt(n)
     builder.write_text(build_prompt(ctx.context(n), n, phase, notes), encoding="utf-8")
     clear_progress()
+    write_acceptance(phase, Path.cwd())  # a difference at phase start is a resume, not an edit
     start_phase_tools(n, phase.gate, opts.gate_timeout)
 
     task = [builder]          # the prompt files that state the work of the current round
@@ -357,6 +359,10 @@ def run_phase(ctx, n):
                        "provider refused or dropped the request, so check the model host's "
                        f"log, not the agent. It then wrote nothing: {problem}")
             break
+        edited = write_acceptance(phase, Path.cwd())
+        if edited:
+            tl.event("acceptance_restored", phase=n, step=step, paths=edited)
+            print(f"    acceptance tests restored: {', '.join(edited)}", flush=True)
         failure = verify(phase, log, gate_timeout=opts.gate_timeout,
                          allow_test_changes=opts.allow_test_changes, timeline=tl,
                          phase_n=n, step=step)

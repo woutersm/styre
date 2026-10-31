@@ -1,9 +1,11 @@
 """The whole loop, driven by the fake pi on PATH (tests/fake_pi.py)."""
 import json
+import subprocess
 import sys
 import time
 
 import pytest
+from conftest import DESIGN  # noqa: E402
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="the fixtures' gate uses `test -f`")
 
@@ -203,6 +205,47 @@ def test_an_unknown_run_id_is_refused(styre, repo, commits):
 def timeline(repo):
     lines = (run_dir(repo) / "timeline.jsonl").read_text(encoding="utf-8").splitlines()
     return [json.loads(ln) for ln in lines]
+
+
+ACCEPT_FILE = "def test_accept_phase1():\n    assert True\n"
+
+
+def acceptance_design():
+    """The conftest design with an acceptance-tests section in phase 1."""
+    return DESIGN.replace(
+        "### Exit criteria\n- done.txt exists",
+        "### Acceptance tests\n\n`tests/test_accept_phase1.py`\n```python\n"
+        + ACCEPT_FILE + "```\n\n"
+        "### Exit criteria\n- done.txt exists")
+
+
+def use_acceptance_design(repo):
+    (repo / "design.md").write_text(acceptance_design(), encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "brief"], cwd=repo, check=True)
+
+
+def test_a_phase_acceptance_file_is_in_its_commit(styre, repo, commits):
+    use_acceptance_design(repo)
+    r = styre("run", "design.md", "--quiet")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert commits()[1] == "Phase 1: First phase"
+    out = subprocess.run(["git", "show", "HEAD~1:tests/test_accept_phase1.py"],
+                         cwd=repo, capture_output=True, text=True)
+    assert out.returncode == 0 and out.stdout == ACCEPT_FILE
+
+
+def test_a_builder_edit_to_an_acceptance_file_is_restored_and_not_committed(styre, repo):
+    use_acceptance_design(repo)
+    r = styre("run", "design.md", "--quiet", plan={"phase1.prompt.md": "edit_acceptance"})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "acceptance tests restored: tests/test_accept_phase1.py" in r.stdout
+    restored = [e for e in timeline(repo) if e["event"] == "acceptance_restored"]
+    assert restored and restored[0]["paths"] == ["tests/test_accept_phase1.py"]
+    assert restored[0]["phase"] == 1 and restored[0]["step"] == "builder"
+    out = subprocess.run(["git", "show", "HEAD~1:tests/test_accept_phase1.py"],
+                         cwd=repo, capture_output=True, text=True)
+    assert out.stdout == ACCEPT_FILE
 
 
 def test_the_timeline_records_the_whole_run(styre, repo, commits):
