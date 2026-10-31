@@ -33,7 +33,7 @@ migration runs.
 
 | File | What it is |
 | --- | --- |
-| `styre/cli.py` | The `design` (opens interactive `claude` on `/styre-design`), `check`, `plan`, `run` and `summarize` subcommands; the `styre` console script. |
+| `styre/cli.py` | The `design` and `simplify` (open interactive `claude` on `/styre-design` and `/styre-simplify`), `check`, `plan`, `run` and `summarize` subcommands; the `styre` console script. |
 | `styre/claude.py` | `claude.call()` for frontier calls with a role, a JSON schema, tools and a timeline line; the settings load. |
 | `styre/settings.py` | The `styre.json` load: the frontier command and its timeout. |
 | `styre/planner.py` | `planner.problems()`: the check that the planned design kept every line, gate, criteria list and advisory of the brief; `PLAN_SCHEMA`.
@@ -52,7 +52,8 @@ migration runs.
 | `styre/summarize.py` | Reading a run back off disk: `summarize`, and the report `run` prints as it ends. |
 | `styre/pi_extensions/` | Passed to every pi process with `--extension`: `cap-output.js`, `no-compaction.js`, `strip-thinking.js`, and `styre-tools.js` (the agent's `styre_gate`, `styre_progress`, `styre_finish`). |
 | `skills/styre/SKILL.md` | The Claude Code skill (`/styre`): the director's loop. |
-| `skills/styre-design/SKILL.md` | The Claude Code skill (`/styre-design`): writing a design with the owner, up to an approved, checked design. |
+| `skills/styre-design/SKILL.md` | The Claude Code skill (`/styre-design`): grilling the owner while writing `GLOSSARY.md` and `docs/adr/`, then the design built from them, simplified and checked, up to approval. |
+| `skills/styre-simplify/SKILL.md` | The Claude Code skill (`/styre-simplify`): challenging a design for 80/20 cuts and putting each to the owner. |
 | `skills/styre/DIRECTOR.md` | How a person and an interactive assistant work with styre: five rules. |
 | `skills/styre/writing-designs.md` | How to shape a design before a run. For the author — never named in a design (`advisories()` flags it). |
 | `docs/` | `architecture.md` (how the parts fit, with diagrams) and `lessons.md` (each failure that shaped styre, with its numbers): update both when a mechanism changes. `v2.md`: the v2 plan, its milestones and M0's results. `*-design.md`: the designs styre was built from. |

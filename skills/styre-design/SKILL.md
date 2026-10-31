@@ -14,14 +14,28 @@ what you may do without asking. Never name either file in the design: `styre che
 design that points the builder at a document, because the builder would read it into its
 context.
 
-## 1. Interview
+## 1. Grill, and write the docs as you go
 
-The interview is `grill-with-docs`: load the `grilling` and `domain-modeling` skills and run
-it with them. Ask every round with the interactive question tool (`AskUserQuestion` in Claude
-Code), never as a list in prose: up to four questions per call, your recommended answer as
-the first option, with the reason in its description. Write each settled term into
-`GLOSSARY.md` and each hard, surprising trade-off into `docs/adr/` as it settles. These docs
-are the base of the design. Without those skills, ask the same way, one round at a time.
+Interview the owner until every decision the design needs is settled. Map the decisions as a
+tree: each answer opens the decisions that hang off it.
+
+**Ask in rounds.** A round is every question whose prerequisites are already answered. Ask it
+with the interactive question tool (`AskUserQuestion` in Claude Code), never as a list in
+prose: up to four questions per call, your recommended answer as the first option with its
+reason. A question that depends on another still open waits for the next round. Look up facts
+yourself (files, tools, past runs); put only decisions to the owner.
+
+**Write the docs as decisions settle**, not at the end:
+
+- `GLOSSARY.md` at the repository root: each term the work uses, one or two sentences on what
+  it is, and the words to avoid for it. Terms of this project only, no implementation detail.
+  Create it with the first term; when it exists, use its words and challenge a conflicting one.
+- `docs/adr/NNNN-slug.md`, numbered from the highest there: one short paragraph per decision
+  that is hard to reverse, surprising to a later reader, and the result of a real trade-off.
+  Add the rejected options when they are worth remembering. Skip a decision missing any of
+  the three.
+
+The glossary and the ADRs are the base of the design.
 
 Cover at least:
 
@@ -71,13 +85,18 @@ builder would spend its context reading them.
 
 Check every path, line range, snippet and command in it against the repository.
 
-## 5. Check it
+## 5. Simplify it
+
+Load the `styre-simplify` skill and run it on the design. It challenges each part for the
+80/20 cut and puts every cut to the owner. Apply the accepted cuts before you check.
+
+## 6. Check it
 
 From the repository root, run `styre check docs/<name>-design.md`. Fix every error. Go through
 each warning under "Worth a look" with the owner: change the design, or say why it can stay.
 The prompt sizes are printed as well. A phase much larger than the rest is worth a second look.
 
-## 6. Hand it over
+## 7. Hand it over
 
 Show the owner the final phase list and the `check` output. When they approve, commit the
 design on its own. Then offer to start it with the /styre skill. Do not start a run without

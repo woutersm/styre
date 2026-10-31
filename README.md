@@ -32,7 +32,7 @@ It has three parts:
 | --- | --- | --- |
 | `styre` | The program. It runs the phases, runs the gate and commits. | `uv tool install`, see [Install](#install) |
 | [`styre/pi_extensions/`](https://github.com/woutersm/styre/tree/main/styre/pi_extensions) | Four pi extensions: the agent's `styre_*` tools and the limits on its context | Nothing. styre passes them to every pi process it starts. |
-| [`skills/`](https://github.com/woutersm/styre/tree/main/skills) | Two Claude Code skills, for writing a design and directing runs | Optional, see [Using it with Claude Code](#using-it-with-claude-code) |
+| [`skills/`](https://github.com/woutersm/styre/tree/main/skills) | Three Claude Code skills, for writing a design, simplifying it and directing runs | Optional, see [Using it with Claude Code](#using-it-with-claude-code) |
 
 ## Why use it
 
@@ -272,14 +272,20 @@ phase needs and reviews the result.
 [`skills/styre/DIRECTOR.md`](https://github.com/woutersm/styre/blob/main/skills/styre/DIRECTOR.md) gives five
 rules for that work.
 
-[`skills/`](https://github.com/woutersm/styre/tree/main/skills) holds two
+[`skills/`](https://github.com/woutersm/styre/tree/main/skills) holds three
 [Claude Code](https://claude.com/claude-code) skills:
 
-- `/styre-design` writes a design with you. It asks what you want built, reads the
-  repository, proposes the phases, writes `docs/<name>-design.md` and runs `styre check` on it.
+- `/styre-design` writes a design with you, and `styre design "idea"` opens it. It grills you
+  in rounds of questions and writes the answers down as it goes: the project's terms in
+  `GLOSSARY.md`, and each hard trade-off as a short decision record in `docs/adr/`. It then
+  reads the repository, cuts the phases, writes `docs/<name>-design.md` from those docs, runs
+  `/styre-simplify` on it and `styre check`.
+- `/styre-simplify` challenges a design for the cuts that remove most work for least value,
+  and puts each one to you. `styre simplify docs/<name>-design.md` opens it on an existing
+  design.
 - `/styre` runs the whole loop: design, run, read a stop, resume, and review the result.
 
-Link them once, from a clone of this repository, and both work in every repository:
+Link them once, from a clone of this repository, and all three work in every repository:
 
 ```sh
 ln -s "$(pwd)"/skills/* ~/.claude/skills/

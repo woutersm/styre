@@ -17,7 +17,8 @@ from styre.summarize import collect, compare, history_lines, repo_history, summa
 from styre.timeline import Timeline
 
 EXAMPLES = """examples:
-  styre design "CSV export"            write a design with Claude Code (/styre-design)
+  styre design "CSV export"            grill, write and simplify a design with Claude Code
+  styre simplify design.md              challenge a design for 80/20 cuts (/styre-simplify)
   styre check design.md                 validate the design and print what it will run
   styre run design.md                   run every phase, one commit each
   styre run design.md --from-phase 2    resume after a stop
@@ -44,11 +45,11 @@ def load_design(path):
     return text, phases
 
 
-def cmd_design(args):
-    """Open interactive Claude Code on the /styre-design skill.
+def open_skill(words):
+    """Open interactive Claude Code with `words` as its first prompt, from the repository root.
 
     A launcher only: the interview, the judgement and the approval stay with the person
-    and Claude. styre itself still calls no model.
+    and Claude. styre itself calls no model here.
     """
     if (root := not_at_root()) is not None:
         print(f"Run styre from the repository root, not a subdirectory:\n  cd {root}",
@@ -57,8 +58,19 @@ def cmd_design(args):
     claude = shutil.which("claude")
     if claude is None:
         sys.exit("Claude Code ('claude') is not on PATH: https://claude.com/claude-code")
-    prompt = " ".join(["/styre-design", *args.idea])
-    return subprocess.run([claude, prompt]).returncode
+    return subprocess.run([claude, " ".join(words)]).returncode
+
+
+def cmd_design(args):
+    """Open Claude Code on /styre-design: grill, write the design, simplify it, check it."""
+    return open_skill(["/styre-design", *args.idea])
+
+
+def cmd_simplify(args):
+    """Open Claude Code on /styre-simplify, to challenge an existing design for 80/20 cuts."""
+    if not Path(args.design).is_file():
+        sys.exit(f"Could not read the design file: {args.design}")
+    return open_skill(["/styre-simplify", args.design])
 
 
 def cmd_plan(args):
@@ -224,6 +236,11 @@ def build_parser():
         "design", help="write a design with Claude Code: opens claude on /styre-design")
     design.add_argument("idea", nargs="*", help="what to build, in a sentence (optional)")
     design.set_defaults(func=cmd_design)
+
+    simplify = sub.add_parser(
+        "simplify", help="challenge a design for simplifications: opens claude on /styre-simplify")
+    simplify.add_argument("design", help="the design document")
+    simplify.set_defaults(func=cmd_simplify)
 
     check = sub.add_parser(
         "check", help="validate the design and print its phases, gates and prompt sizes")

@@ -115,6 +115,25 @@ def test_design_opens_claude_on_the_design_skill(tmp_path, monkeypatch):
     assert calls == [["/bin/claude", "/styre-design CSV export"]]
 
 
+def test_simplify_opens_claude_on_the_simplify_skill(tmp_path, monkeypatch):
+    import styre.cli as cli
+    calls = []
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "d.md").write_text("## Phase 1: x\n", encoding="utf-8")
+    monkeypatch.setattr(cli, "not_at_root", lambda: None)
+    monkeypatch.setattr(cli.shutil, "which", lambda name: f"/bin/{name}")
+    monkeypatch.setattr(cli.subprocess, "run",
+                        lambda cmd: calls.append(cmd) or type("R", (), {"returncode": 0})())
+    assert main(["simplify", "d.md"]) == 0
+    assert calls == [["/bin/claude", "/styre-simplify d.md"]]
+
+
+def test_simplify_a_missing_design_is_an_error(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit, match="Could not read the design file"):
+        main(["simplify", "nope.md"])
+
+
 def test_design_without_claude_is_an_error(monkeypatch):
     import styre.cli as cli
     monkeypatch.setattr(cli, "not_at_root", lambda: None)
