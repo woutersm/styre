@@ -157,3 +157,18 @@ implementing the nine design steps, plus a CLI in `main()`.
   `PurePosixPath.is_absolute()`, per the design's "or a Windows drive like `C:`".
 - Content is kept exactly as inside the fence (no stripping), with the trailing newline,
   matching the gate's own fence handling.
+
+## Phase 2: The planner writes acceptance tests
+
+- **No `planner.py` change was needed.** The design said `problems()` is "read only"; it
+  turns out the existing per-line body comparison already covers acceptance sections (they
+  are part of the phase body), and its `validate(pph)` call already applies phase 1's
+  acceptance errors to the planned design. The whole phase is one prompt bullet plus tests.
+- **Prompt wording** follows the design's words; the test asserts on two or three phrases
+  (`"### Acceptance tests"`, `"one test per interface the brief names"`, ...), not the full
+  text, so later rewordings won't break it.
+- **Fixture strategy for `run_plan`:** the conftest `DESIGN` has no acceptance section, so
+  the plan-level tests use a local `acceptance_brief()`/`acceptance_planned()` pair built on
+  it. `run_plan` gained a `brief=` keyword that swaps design.md *and commits it* — without
+  the commit the dirty-tree preflight refuses the plan call, which was the trap that cost
+  the first run of these tests.

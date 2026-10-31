@@ -94,6 +94,16 @@ find what you add. Add only what is true of the repository as it is now.
 For each phase, add under its text:
 - a **Where** list: each file the phase edits or must read, with a line range and one line on
   what is there now, and the one existing test file it should copy from;
+- an `### Acceptance tests` section, placed after the phase's text and before its exit
+  criteria: one new test file, a line holding only its path in backticks, then a fenced block
+  with the whole file. Write one test per interface the brief names for this phase (import it
+  from the module the brief says, call it with the signature the brief gives, construct each
+  error class with the arguments the brief shows) and one test per rule the brief states with
+  an exact outcome (a sentence, an exit code, a refusal). Nothing the brief does not state.
+  Use the repository's test framework and conventions, and put the file where this phase's
+  gate command collects it. Each path must be new, and never a path another phase uses. If
+  the brief already has an `### Acceptance tests` section, keep it as it is; you may add
+  files to it;
 - the exact signatures, types and constants it calls or changes, copied from the source;
 - for every library the repository has not used before: the imports, the calls in the order
   the phase makes them and what each returns, in 15 lines or fewer, read from the installed

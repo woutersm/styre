@@ -29,8 +29,14 @@ def planned_design():
 
 
 def run_plan(repo, fake_claude, tmp_path, monkeypatch, reply=None, reply_dir=None,
-             exit_code=None, cwd=None):
-    """Run `python -m styre plan` in the repo with fake_claude on PATH. Returns (rc, out, err)."""
+             exit_code=None, cwd=None, brief=None):
+    """Run `python -m styre plan` in the repo with fake_claude on PATH. Returns (rc, out, err).
+
+    `brief` replaces the design.md in the repo before the call; the default is DESIGN."""
+    if brief is not None:
+        (repo / "design.md").write_text(brief, encoding="utf-8")
+        subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-qm", "brief"], cwd=repo, check=True)
     cfg = tmp_path / "styre.json"
     cfg.write_text('{"frontier": {"command": ["claude"], "timeout": 60}}', encoding="utf-8")
     env = dict(os.environ)
@@ -240,6 +246,74 @@ def test_problems_names_an_invalid_planned_design():
     assert any("Phase 2 has no '### Gate'" in p for p in planner.problems(DESIGN, no_gate))
 
 
+# --- acceptance tests in planning --------------------------------------------------
+
+
+def acceptance_brief():
+    """The conftest brief with an acceptance-tests section in phase 1."""
+    return DESIGN.replace(
+        "### Exit criteria\n- done.txt exists",
+        "### Acceptance tests\n\n`tests/test_accept_phase1.py`\n```python\n"
+        "def test_accept_phase1():\n    assert True\n```\n\n"
+        "### Exit criteria\n- done.txt exists")
+
+
+def acceptance_planned():
+    """The brief's acceptance section kept, plus a new file added to it."""
+    return acceptance_brief().replace(
+        "def test_accept_phase1():\n    assert True\n```\n\n### Exit criteria\n- done.txt exists",
+        "def test_accept_phase1():\n    assert True\n```\n\n"
+        "`tests/test_accept_phase1b.py`\n```python\n"
+        "def test_accept_phase1b():\n    assert 1 + 1 == 2\n```\n\n"
+        "### Exit criteria\n- done.txt exists")
+
+
+def test_problems_is_empty_when_the_acceptance_section_is_kept_and_added_to():
+    assert planner.problems(acceptance_brief(), acceptance_planned()) == []
+
+
+def test_problems_names_a_dropped_line_of_the_acceptance_section():
+    dropped = acceptance_planned().replace("    assert True\n```\n\n`", "```\n\n`")
+    assert "assert True" not in dropped  # the line really is gone
+    assert any("Phase 1 dropped the brief's line" in p
+               for p in planner.problems(acceptance_brief(), dropped))
+
+
+def test_planned_design_keeps_and_extends_the_acceptance_section(tmp_path, monkeypatch,
+                                                                  fake_claude, plan_repo):
+    brief = acceptance_brief()
+    planned = acceptance_planned()
+    reply = tmp_path / "planned.json"
+    reply.write_text(json.dumps(
+        {"type": "result", "is_error": False, "structured_output": {"design": planned}}),
+        encoding="utf-8")
+    rc, out, err = run_plan(plan_repo, fake_claude, tmp_path, monkeypatch, reply=str(reply),
+                            brief=brief)
+    assert rc == 0, err
+    subjects = git("log", "--format=%s", cwd=plan_repo).splitlines()
+    assert subjects[0] == "Plan: design"
+    assert (plan_repo / "design.md").read_text(encoding="utf-8") == planned
+    assert not git("status", "--porcelain", cwd=plan_repo).strip()  # the tree stays clean
+
+
+def test_planned_design_dropping_an_acceptance_line_is_refused(tmp_path, monkeypatch,
+                                                                fake_claude, plan_repo):
+    brief = acceptance_brief()
+    bad = acceptance_planned().replace("    assert True\n```\n\n`", "```\n\n`")
+    reply = tmp_path / "bad.json"
+    reply.write_text(json.dumps(
+        {"type": "result", "is_error": False, "structured_output": {"design": bad}}),
+        encoding="utf-8")
+    rc, out, err = run_plan(plan_repo, fake_claude, tmp_path, monkeypatch, reply=str(reply),
+                            brief=brief)
+    assert rc == 1
+    assert "dropped the brief's line" in out
+    assert "Traceback" not in err
+    assert (plan_repo / "design.md").read_text(encoding="utf-8") == brief  # brief untouched
+    assert git("log", "--format=%s", cwd=plan_repo).splitlines() == ["brief", "initial"]  # no commit
+    assert not git("status", "--porcelain", cwd=plan_repo).strip()
+
+
 # --- planner_prompt --------------------------------------------------------------
 
 
@@ -259,6 +333,17 @@ def test_planner_prompt_leaves_out_the_size_without_a_window():
     text = planner_prompt(DESIGN, None)
     assert "a context of" not in text  # the sentence leaves out the size entirely
     assert "no web access" in text
+
+
+def test_planner_prompt_asks_for_acceptance_tests_per_phase():
+    from styre.prompts import planner_prompt
+    text = planner_prompt(DESIGN, None)
+    assert "### Acceptance tests" in text
+    assert "before its exit" in text  # placed after the phase's text, before the exit criteria
+    assert "one test per interface the brief names" in text
+    assert "one test per rule the brief states" in text
+    assert "Nothing the brief does not state" in text
+    assert "keep it as it is" in text  # a brief's own section survives planning
 
 
 def test_dirty_tree_is_refused_before_any_call(tmp_path, monkeypatch, fake_claude, plan_repo):
