@@ -189,6 +189,7 @@ class Phase:
     failed_gates: list[tuple] = field(default_factory=list)   # (step, command, rc)
     pi_failures: list[tuple] = field(default_factory=list)    # (step, rc)
     guard_problems: list[str] = field(default_factory=list)
+    acceptance_edits: list[str] = field(default_factory=list)   # each restored path, every time it was
     usage: Usage = field(default_factory=Usage)
     tool_errors: dict = field(default_factory=lambda: defaultdict(int))  # tool name -> count
     agent_gates: list = field(default_factory=list)  # each styre_gate run's `passed`, in order
@@ -207,7 +208,8 @@ class Phase:
         """Worth reading about afterwards. A phase that committed cleanly but corrected
         itself several times counts: that gap is the clearest sign of a criterion the design
         states less plainly than its gate enforces, and it is invisible in the table."""
-        return bool(self.failed_gates or self.pi_failures or self.guard_problems or self.unmet
+        return bool(self.failed_gates or self.pi_failures or self.guard_problems or self.acceptance_edits
+                    or self.unmet
                     or (self.status and self.status != "committed")
                     or (self.self_rounds and not self.rounds)
                     or bool(self.tool_errors) or bool(self.relays)
@@ -275,6 +277,8 @@ def read_timeline(run, summary):
                 phase.failed_gates.append((e.get("step"), e.get("command"), e["rc"]))
         elif kind == "guard_result" and not e.get("ok"):
             phase_of(summary.phases, n).guard_problems.append(e.get("problem") or "rejected")
+        elif kind == "acceptance_restored":
+            phase_of(summary.phases, n).acceptance_edits.extend(e.get("paths") or [])
         elif kind == "commit":
             phase_of(summary.phases, n).sha = e.get("sha")
         elif kind == "phase_end":
@@ -601,6 +605,9 @@ def where_to_look(summary):
                        + (" (timeout)" if rc == 124 else ""))
         for problem, times in unique(p.guard_problems):
             out.append(f"- test guard{f' ({times}x)' if times > 1 else ''}: {oneline(problem)}")
+        for path, times in unique(p.acceptance_edits):
+            out.append(f"- acceptance test edited by the builder and restored"
+                       f"{f' ({times}x)' if times > 1 else ''}: {path}")
         for unmet in p.unmet:
             out.append(f"- unmet criterion: {unmet}")
         # With styre_gate, a red run on the way to green is the workflow; only a gate that

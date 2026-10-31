@@ -282,6 +282,48 @@ def test_a_repeated_guard_failure_is_listed_once_with_a_count(tmp_path):
     assert "- test guard (2x): Tests were skipped or marked xfail: tests/test_a.py: x" in text
 
 
+def test_acceptance_edits_are_listed_once_with_a_count(tmp_path):
+    def restored(step):
+        return {"ts": "2026-09-20T22:15:50+02:00", "event": "acceptance_restored",
+                "phase": 1, "step": step, "paths": ["tests/test_accept_phase1.py"]}
+    timeline = [*TIMELINE, restored("builder"), restored("fix 1")]
+    run = make_run(tmp_path, timeline=timeline)
+    phase = collect(run).phases[0]
+    assert phase.acceptance_edits == ["tests/test_accept_phase1.py"] * 2
+    text = render(collect(run))
+    assert "- acceptance test edited by the builder and restored (2x): " \
+           "tests/test_accept_phase1.py" in text
+
+
+def test_a_single_acceptance_edit_has_no_count(tmp_path):
+    timeline = [*TIMELINE, {"ts": "t", "event": "acceptance_restored", "phase": 1,
+                            "step": "builder", "paths": ["tests/test_accept_phase1.py"]}]
+    text = render(collect(make_run(tmp_path, timeline=timeline)))
+    assert "- acceptance test edited by the builder and restored: " \
+           "tests/test_accept_phase1.py" in text
+    assert "restored (" not in text
+
+
+def test_acceptance_edits_group_by_path_across_phases(tmp_path):
+    timeline = [*TIMELINE,
+                {"ts": "t", "event": "acceptance_restored", "phase": 1, "step": "builder",
+                 "paths": ["tests/test_accept_a.py"]},
+                {"ts": "t", "event": "acceptance_restored", "phase": 2, "step": "fix 1",
+                 "paths": ["tests/test_accept_b.py", "tests/test_accept_a.py"]}]
+    run = make_run(tmp_path, timeline=timeline, phases=(1, 2))
+    phases = collect(run).phases
+    assert phases[0].acceptance_edits == ["tests/test_accept_a.py"]
+    assert phases[1].acceptance_edits == ["tests/test_accept_b.py", "tests/test_accept_a.py"]
+    text = render(collect(run))
+    assert "- acceptance test edited by the builder and restored: tests/test_accept_a.py" in text
+    assert "- acceptance test edited by the builder and restored: tests/test_accept_b.py" in text
+
+
+def test_a_run_without_acceptance_edits_is_unchanged(tmp_path):
+    text = render(collect(make_run(tmp_path, timeline=TIMELINE)))
+    assert "acceptance" not in text
+
+
 def test_state_files_fill_in_for_a_phase_the_timeline_never_finished(tmp_path):
     run = make_run(tmp_path, timeline=TIMELINE[:2], states=[
         (1, {"phase": 1, "status": "BLOCKED", "reason": "the design is ambiguous",

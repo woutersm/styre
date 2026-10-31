@@ -186,3 +186,14 @@ implementing the nine design steps, plus a CLI in `main()`.
 - The builder's `styre_gate` tool (`pi_extensions/`) deliberately does not restore: a
   builder that edits an acceptance file gets a red styre gate after restoration and a fix
   round, which is the signal the report (phase 4) will count.
+
+## Phase 4: Acceptance edits in the report
+
+- `read_timeline` folds every `acceptance_restored` event's `paths` into
+  `Phase.acceptance_edits` (one entry per path, per event), so a builder that
+  re-tampered in each round shows as `(Nx)` via the existing `unique()` grouping.
+- The "Where to look" line is `- acceptance test edited by the builder and restored
+  ({times}x): {path}` — the exact wording the design fixed; no backticks around the
+  path, unlike other lines.
+- A phase with acceptance edits counts as a `problems` phase, so an otherwise
+  committed phase that needed restoring still shows under "Where to look".
