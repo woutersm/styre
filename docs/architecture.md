@@ -49,6 +49,7 @@ Each module has one job.
 | `cli.py` | The `design`, `check`, `run` and `summarize` subcommands; `design` only opens interactive `claude` on `/styre-design` |
 | `config.py` | Constants, the pi invocation, the context fractions, `RunOptions` |
 | `design.py` | Parses a design into phases, validates it, and produces `check`'s warnings |
+| `acceptance.py` | `write()`: writes a phase's acceptance files from the design into the tree; returns the paths it had to restore |
 | `prompts.py` | Writes the phase prompt, the fix-round prompts, the handoff and the relay prompt |
 | `agents.py` | The block styre writes into the target repository's `AGENTS.md` |
 | `runner.py` | Preflight and the phase loop |
@@ -65,7 +66,8 @@ Each module has one job.
 
 ```mermaid
 flowchart TD
-    start([phase N]) --> prompt["write the prompt:<br/>preamble, phase index, this phase,<br/>the previous phase's notes"]
+    start([phase N]) --> accept0["write the phase's acceptance files"]
+    accept0 --> prompt["write the prompt:<br/>preamble, phase index, this phase,<br/>the previous phase's notes"]
     prompt --> step["start a fresh pi process"]
     step --> ended{"how did<br/>the step end?"}
     ended -- "context past 75%" --> relays{"did the last fresh<br/>start change the tree<br/>or the progress file?"}
@@ -75,7 +77,8 @@ flowchart TD
     ended -- "pi exited non-zero,<br/>or went silent" --> stop
     ended -- "agent called styre_finish" --> state{"state file:<br/>DONE?"}
     state -- "BLOCKED, missing,<br/>or empty response" --> stop
-    state -- DONE --> gate["styre runs every gate command,<br/>then the test guard"]
+    state -- DONE --> accept["write the acceptance files back"]
+    accept --> gate["styre runs every gate command,<br/>then the test guard"]
     gate -- green --> diff{"anything staged?"}
     diff -- yes --> commit(["commit, titled after the phase"])
     diff -- no --> stop
@@ -89,6 +92,11 @@ A run is these phases in order. The first phase that stops ends the run, and
 `--from-phase N` resumes it in the same run directory when the latest run used the same
 design file.
 
+The acceptance files are written twice a phase: at the start, and again before every gate
+run. A file the builder changed in between is restored and recorded as an
+`acceptance_restored` event, which the report names; the builder is told instead to report
+BLOCKED when one of them is wrong.
+
 ## One step, in detail
 
 ```mermaid
@@ -99,6 +107,7 @@ sequenceDiagram
     participant R as target repo
 
     S->>R: write .styre/phase.json (gate, timeout)
+    S->>R: write the phase's acceptance files
     S->>P: pi -p --mode json --no-skills --no-mcp<br/>--extension ... @phaseN.prompt.md
     loop each turn
         P->>M: request (earlier thinking stripped)
@@ -115,6 +124,7 @@ sequenceDiagram
     P->>R: styre_finish writes phaseN.state.json<br/>(refuses DONE after a red gate)
     P-->>S: exit 0
     S->>R: move state, notes and progress into .styre/runs/<id>/
+    S->>R: write the acceptance files back (a change is an<br/>acceptance_restored event)
     S->>R: run the gate again, check the staged diff
     S->>R: git commit
 ```

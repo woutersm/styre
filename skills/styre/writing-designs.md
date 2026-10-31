@@ -103,6 +103,30 @@ Applied there, phase 2 became "The schema, additively" (two modules, additive, b
 included) and a new phase 6 became "Drop the old columns and follow through", placed after
 the tick had moved. Same total work, seven phases instead of six, every gate green alone.
 
+## A phase's `### Acceptance tests`
+
+A phase may carry its acceptance tests in its own section, for the interfaces and rules its
+text states. It sits after the phase's text and before `### Exit criteria`. Each file is a
+line holding only its path in backticks, then a fenced block with the file's whole content:
+
+````markdown
+### Acceptance tests
+
+`tests/test_accept_phase2.py`
+```python
+def test_the_named_interface():
+    ...
+```
+````
+
+Paths are new: an acceptance file is one the phase adds, so a path that already exists in
+the repository replaces nothing and confuses the report when the builder's edits meet the
+restore. And the phase's gate must collect the file — a gate that does not run it tests
+nothing. `styre check` refuses a path that is absolute, leaves the repository, repeats, or
+has no block. At the phase's start, and before every gate run, styre writes these files
+back into the tree from the design; an edit by the builder is restored and named in the
+report.
+
 ## The ripple gets its own phase, and it goes late
 
 "Rename this and follow through everywhere" is the shape that blows up: it fans out to every
@@ -216,3 +240,4 @@ and of the last one that worked: the difference is the size of the split you nee
 6. Every new library a phase uses has a snippet in that phase, run once.
 7. No phase both fills a table and shows it.
 8. Every phase has a **Where** list of the files it edits, with line ranges.
+9. Every phase's gate collects its acceptance files, and their paths are new.

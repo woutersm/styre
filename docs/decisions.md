@@ -197,3 +197,19 @@ implementing the nine design steps, plus a CLI in `main()`.
   path, unlike other lines.
 - A phase with acceptance edits counts as a `problems` phase, so an otherwise
   committed phase that needed restoring still shows under "Where to look".
+
+## Phase 5: Docs
+
+- The design said to make "your checks" and "runs your checks" become "your gate" and
+  "runs the gate". The second sentence is a passive clause in the README's first
+  paragraph ("styre runs your checks itself"); I read "your gate" as the object of that
+  clause and wrote "styre runs the gate itself", since "runs the gate" is the phrase the
+  design names and "your gate" as object of "runs" would not parse there.
+- CLAUDE.md's test-guard wording now reads "a stop until the v2 executor replaces it"
+  with a parenthetical "(M3 kept v1's executor)" in Goal and scope, and "M3 kept v1's
+  executor, so the stop holds" in the settled-decisions line. This records the decision
+  rather than a milestone that no longer changes the answer.
+- `docs/adr/` rows in the CLAUDE.md Files table and the `GLOSSARY.md` row describe the
+  directories as the project's terms and the decisions behind the design; the ADR
+  numbering is M3's, but the row is lifetime-stable, so it names the kind of file, not
+  the count.

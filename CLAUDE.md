@@ -22,8 +22,8 @@ migration runs.
   loop waits on Claude.
 - **The checks decide what is committed.** styre runs the full checks itself before every
   commit, and never commits on red. Under v2 the builder is taken to act in good faith, so
-  the checks are its feedback, and test changes are a metric in every report; until M3
-  replaces the executor, v1's test guard stays a stop.
+  the checks are its feedback, and test changes are a metric in every report; until the v2
+  executor replaces it, v1's test guard stays a stop (M3 kept v1's executor).
 - **The person approves before and reviews after**: the design or plan before a run,
   anything live (merging, installing, deleting data, publishing), and the result.
 
@@ -42,6 +42,7 @@ migration runs.
 | `styre/design.py` | Parsing a design into `Phase` objects; `phase_context()`; `validate()` (errors) and `advisories()` (warnings); the `check` rendering. |
 | `styre/prompts.py` | The phase prompt, the fix-round prompts (fresh and resumed), the handoff and the relay prompt. |
 | `styre/agents.py` | `AGENTS_BODY`, the block written into the target repo's `AGENTS.md`. |
+| `styre/acceptance.py` | `write()` — writes a phase's acceptance files from the design into the tree, at phase start and before every gate run; returns the paths it restored. |
 | `styre/runner.py` | `preflight()`, the `Ctx` bundle, the phase loop (`run_phase`, `orchestrate`). |
 | `styre/process.py` | `run()` for gates and git, `stream_pi()` for the agent (tracks context, stops at a turn end past `relay_at`), the idle watchdog, `kill_tree()`. |
 | `styre/guard.py` | `verify()` — the gate — and `test_tampering()`. |
@@ -56,6 +57,8 @@ migration runs.
 | `skills/styre-simplify/SKILL.md` | The Claude Code skill (`/styre-simplify`): challenging a design for 80/20 cuts and putting each to the owner. |
 | `skills/styre/DIRECTOR.md` | How a person and an interactive assistant work with styre: five rules. |
 | `skills/styre/writing-designs.md` | How to shape a design before a run. For the author — never named in a design (`advisories()` flags it). |
+| `GLOSSARY.md` | The project's terms, written while the design is grilled. |
+| `docs/adr/` | The decision records behind the design — the hard trade-offs, one short file each. |
 | `docs/` | `architecture.md` (how the parts fit, with diagrams) and `lessons.md` (each failure that shaped styre, with its numbers): update both when a mechanism changes. `v2.md`: the v2 plan, its milestones and M0's results. `*-design.md`: the designs styre was built from. |
 | `evals/` | Development evals, not runtime: `interface.py` (does the model follow the contract, against real pi) `advisories.py` (do `check`'s warnings predict trouble, over a repo's run history), `bench.py` and `bench_report.py` (run benchmark designs end to end and report the scores) and `probe.py` (a model server's raw prefill, decode and batching speed). |
 | `TODO.md` | What is left and what is parked. |
@@ -175,8 +178,9 @@ AGENTS.md                 committed; only the styre block is managed
   deciding what a stop means and reviewing a run stay with the person and the interactive
   assistant until M4 (advisor) and M5 (reviewer) take them over.
 - **Never commit on red.** styre runs the checks itself before every commit, whatever the
-  agent says. The checks are not complexity to trim. The test guard is a stop until M3, then
-  a metric (said-done-on-red and test-removal rates) in every report.
+  agent says. The checks are not complexity to trim. The test guard is a stop until the v2
+  executor replaces it, then a metric (said-done-on-red and test-removal rates) in every
+  report. M3 kept v1's executor, so the stop holds.
 - **One commit per phase**, no tags: the commit is the rollback point.
 - **Serial, one fresh pi process per phase.** State lives in files and git, not in context —
   within a phase too: a step that outgrows its budget continues from its progress file.

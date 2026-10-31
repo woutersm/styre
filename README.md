@@ -5,7 +5,7 @@
 styre runs a phased design through the [pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent)
 coding agent while nobody watches. Each phase ends in one git commit, and styre commits a
 phase only when your own tests pass. It is built for local models, which cost nothing per
-token but are slow. styre runs your checks itself and never takes the agent's word that a
+token but are slow. styre runs the gate itself and never takes the agent's word that a
 phase is done.
 
 > Status: alpha. Used on macOS with local 27B models behind an OpenAI-compatible API, and
@@ -154,6 +154,18 @@ git log --oneline styre/my-design
 ```
 
 To resume a stopped run, use `styre run docs/my-design.md --from-phase N`.
+
+## Acceptance tests
+
+An **acceptance test** is a test in a phase's section of the design, for an interface the
+brief names or a rule it states. `styre plan` writes them per phase: one test file per
+named interface and stated rule, in the phase's `### Acceptance tests` section. You review
+them with the plan, in the same commit.
+
+At the start of each phase styre writes those files into the working tree, and writes them
+back before every gate run: a builder that edits one is undone, and the report names the
+edit. A builder that finds one of them wrong does not fix it; it reports `BLOCKED` and the
+fix is a change to the design.
 
 ## The design file
 
