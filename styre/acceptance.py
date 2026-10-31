@@ -12,13 +12,16 @@ from pathlib import Path
 def write(phase, root) -> list[str]:
     """Write each of `phase.acceptance` to its path under `root`, creating parents.
 
-    Returns the paths of the files that already existed with different content, in order.
-    A file that did not exist yet is written and not returned.
+    Returns the paths of the files that were missing or held different content, in order.
+    Before a gate run both mean the builder edited or deleted it, since styre wrote every
+    file at phase start; at phase start the caller ignores the result.
     """
     edited: list[str] = []
     for path, content in phase.acceptance:
         target = Path(root) / path
-        if target.exists():
+        if not target.is_file():
+            edited.append(path)
+        else:
             with open(target, encoding="utf-8", newline="") as f:
                 if f.read() != content:
                     edited.append(path)

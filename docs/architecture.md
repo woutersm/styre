@@ -93,7 +93,7 @@ A run is these phases in order. The first phase that stops ends the run, and
 design file.
 
 The acceptance files are written twice a phase: at the start, and again before every gate
-run. A file the builder changed in between is restored and recorded as an
+run. A file the builder changed or deleted in between is restored and recorded as an
 `acceptance_restored` event, which the report names; the builder is told instead to report
 BLOCKED when one of them is wrong.
 

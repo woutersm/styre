@@ -163,8 +163,8 @@ named interface and stated rule, in the phase's `### Acceptance tests` section. 
 them with the plan, in the same commit.
 
 At the start of each phase styre writes those files into the working tree, and writes them
-back before every gate run: a builder that edits one is undone, and the report names the
-edit. A builder that finds one of them wrong does not fix it; it reports `BLOCKED` and the
+back before every gate run: a builder that edits or deletes one is undone, and the report
+names the file. A builder that finds one of them wrong does not fix it; it reports `BLOCKED` and the
 fix is a change to the design.
 
 ## The design file

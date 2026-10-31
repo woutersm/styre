@@ -119,13 +119,12 @@ def test_the_named_interface():
 ```
 ````
 
-Paths are new: an acceptance file is one the phase adds, so a path that already exists in
-the repository replaces nothing and confuses the report when the builder's edits meet the
-restore. And the phase's gate must collect the file — a gate that does not run it tests
+Paths are new: an acceptance file is one the phase adds. styre overwrites a path that
+already exists with the design's content, and the builder's own work in that file is lost. And the phase's gate must collect the file — a gate that does not run it tests
 nothing. `styre check` refuses a path that is absolute, leaves the repository, repeats, or
 has no block. At the phase's start, and before every gate run, styre writes these files
-back into the tree from the design; an edit by the builder is restored and named in the
-report.
+back into the tree from the design; a file the builder edited or deleted is restored and
+named in the report.
 
 ## The ripple gets its own phase, and it goes late
 

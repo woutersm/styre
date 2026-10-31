@@ -175,6 +175,12 @@ def act(action, n):
                 with open(p, "a", encoding="utf-8") as f:
                     f.write("# tampered by the builder\n")
         return
+    if action == "delete_acceptance":
+        act("ok", n)
+        for p in Path.cwd().rglob("test_accept*"):
+            if p.is_file():
+                p.unlink()
+        return
     # "ok"
     Path(f"work{n}.py").write_text(f"value = {n}\n", encoding="utf-8")
     Path("done.txt").write_text("done\n", encoding="utf-8")

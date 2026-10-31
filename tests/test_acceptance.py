@@ -9,9 +9,11 @@ def phase_with(*files):
                  acceptance=list(files))
 
 
-def test_write_creates_a_missing_file_and_returns_empty(tmp_path):
+def test_write_creates_a_missing_file_and_returns_its_path(tmp_path):
+    """Before a gate run a missing file was deleted: styre wrote it at phase start. At phase
+    start itself the runner ignores the result."""
     phase = phase_with(("tests/test_accept_a.py", "def test_a():\n    assert True\n"))
-    assert acceptance.write(phase, tmp_path) == []
+    assert acceptance.write(phase, tmp_path) == ["tests/test_accept_a.py"]
     out = tmp_path / "tests" / "test_accept_a.py"
     with open(out, encoding="utf-8", newline="") as f:
         assert f.read() == "def test_a():\n    assert True\n"
@@ -26,7 +28,8 @@ def test_write_returns_the_paths_of_files_it_overwrote(tmp_path):
     phase = phase_with(("test_accept_a.py", "def test_a():\n    assert True\n"),
                        ("sub/test_accept_b.py", "def test_b():\n    pass\n"),
                        ("test_accept_c.py", "new file\n"))
-    assert acceptance.write(phase, tmp_path) == ["test_accept_a.py", "sub/test_accept_b.py"]
+    assert acceptance.write(phase, tmp_path) == ["test_accept_a.py", "sub/test_accept_b.py",
+                                                 "test_accept_c.py"]
     with open(a, encoding="utf-8", newline="") as f:
         assert f.read() == "def test_a():\n    assert True\n"
     with open(b, encoding="utf-8", newline="") as f:
@@ -44,7 +47,7 @@ def test_write_returns_empty_for_an_identical_file(tmp_path):
 def test_write_keeps_crlf_content_byte_for_byte(tmp_path):
     content = "a = 1\r\nb = 2\r\n"
     phase = phase_with(("test_accept_crlf.py", content))
-    acceptance.write(phase, tmp_path)
+    assert acceptance.write(phase, tmp_path) == ["test_accept_crlf.py"]
     # Rewrite a second time so the file existed first: the CRLF must survive both.
     assert acceptance.write(phase, tmp_path) == []
     assert (tmp_path / "test_accept_crlf.py").read_bytes() == content.encode("utf-8")

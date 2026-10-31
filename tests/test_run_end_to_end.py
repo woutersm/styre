@@ -248,6 +248,17 @@ def test_a_builder_edit_to_an_acceptance_file_is_restored_and_not_committed(styr
     assert out.stdout == ACCEPT_FILE
 
 
+def test_a_builder_deleting_an_acceptance_file_is_restored_and_logged(styre, repo):
+    use_acceptance_design(repo)
+    r = styre("run", "design.md", "--quiet", plan={"phase1.prompt.md": "delete_acceptance"})
+    assert r.returncode == 0, r.stdout + r.stderr
+    restored = [e for e in timeline(repo) if e["event"] == "acceptance_restored"]
+    assert restored and restored[0]["paths"] == ["tests/test_accept_phase1.py"]
+    out = subprocess.run(["git", "show", "HEAD~1:tests/test_accept_phase1.py"],
+                         cwd=repo, capture_output=True, text=True)
+    assert out.stdout == ACCEPT_FILE
+
+
 def test_the_timeline_records_the_whole_run(styre, repo, commits):
     assert styre("run", "design.md", "--quiet").returncode == 0
     events = timeline(repo)
