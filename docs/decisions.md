@@ -142,3 +142,18 @@ implementing the nine design steps, plus a CLI in `main()`.
   unplanned results of one setup are two groups (old `result.json` files without the key
   sort as `None`, i.e. unplanned), and only a group with planned results gets the
   `Plan h` and `Frontier tok` (tokens in + out) columns, summed in the total row.
+
+## Phase 1: Acceptance tests in the design format
+
+- Parsing is line-oriented, not fence-scanning: `parse_acceptance` collects the indices of
+  path lines (a line whose stripped text is a single backticked token), then searches for
+  the first fence *strictly between* one path line and the next (or the section's end).
+  This means a path line whose fence is malformed/missing gets `(path, None)` and a later
+  fence can never be adopted by an earlier path.
+- The repeated-path error reports the *second* occurrence ("Phase N repeats … from phase
+  M"); if a path appears three times, each later occurrence reports separately against its
+  first-seen phase.
+- Windows drive letters are checked with a `^[a-zA-Z]:` prefix test in addition to
+  `PurePosixPath.is_absolute()`, per the design's "or a Windows drive like `C:`".
+- Content is kept exactly as inside the fence (no stripping), with the trailing newline,
+  matching the gate's own fence handling.

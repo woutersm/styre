@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from pathlib import PurePosixPath
 
 PHASE_RE = re.compile(r"(?m)^##\s+(Phase\s+\d+.*?)\s*$")
 # A markdown document named anywhere in the design, backticked or bare. Code paths are not
@@ -79,6 +80,8 @@ TEST_WORD_RE = re.compile(r"\b(test|tests|pytest|unittest|suite|spec)\b", re.I)
 SKIP_WINDOW = 120
 SECTION_RE = re.compile(r"(?m)^###\s+(.+?)\s*$")
 FENCE_RE = re.compile(r"```[a-z]*\n(.*?)```", re.S)
+# A backticked token on a line of its own: the path line of an acceptance test.
+ACCEPT_PATH_RE = re.compile(r"^(?P<p>`[^`]+`)\s*$")
 
 
 @dataclass
@@ -89,6 +92,7 @@ class Phase:
     body: str
     criteria: list[str] = field(default_factory=list)
     gate: list[str] = field(default_factory=list)
+    acceptance: list[tuple[str, str]] = field(default_factory=list)
 
     @property
     def short_title(self):
@@ -109,8 +113,26 @@ def parse_phases(text):
         block = FENCE_RE.search(named.get("gate", ""))
         gate = [ln.strip() for ln in (block.group(1) if block else "").splitlines()
                 if ln.strip() and not ln.strip().startswith("#")]
-        phases.append(Phase(title=title, body=body, criteria=criteria, gate=gate))
+        phases.append(Phase(title=title, body=body, criteria=criteria, gate=gate,
+                            acceptance=parse_acceptance(named.get("acceptance tests", ""))))
     return phases
+
+
+def parse_acceptance(section):
+    """The '### Acceptance tests' section: (path, content) pairs in document order.
+
+    A path line is a line holding only its backticked path; its content is the first
+    fenced block after it, kept exactly with a trailing newline. A path line with no
+    block before the next path line is (path, None), so validate can name it.
+    """
+    out = []
+    lines = section.splitlines()
+    paths = [i for i, ln in enumerate(lines) if ACCEPT_PATH_RE.match(ln.strip())]
+    for n, i in enumerate(paths):
+        stop = paths[n + 1] if n + 1 < len(paths) else len(lines)
+        fence = FENCE_RE.search("\n".join(lines[i + 1:stop]))
+        out.append((lines[i].strip()[1:-1], fence.group(1) if fence else None))
+    return out
 
 
 def preamble(text):
@@ -133,6 +155,22 @@ def validate(phases):
                 for i, p in enumerate(phases, 1) if not p.criteria]
     problems += [f"Phase {i} has no '### Gate' code block."
                  for i, p in enumerate(phases, 1) if not p.gate]
+    seen = {}
+    for i, p in enumerate(phases, 1):
+        for path, content in p.acceptance:
+            if PurePosixPath(path).is_absolute() or re.match(r"^[a-zA-Z]:", path):
+                problems.append(f"Phase {i}'s acceptance test path '{path}' must be "
+                                f"relative to the repository root.")
+            elif any(part == ".." for part in PurePosixPath(path).parts):
+                problems.append(f"Phase {i}'s acceptance test path '{path}' leaves the "
+                                f"repository.")
+            elif path in seen:
+                problems.append(f"Phase {i} repeats the acceptance test path '{path}' "
+                                f"from phase {seen[path]}.")
+            else:
+                seen[path] = i
+            if content is None:
+                problems.append(f"Phase {i}'s acceptance test '{path}' has no code block.")
     return problems
 
 

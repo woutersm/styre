@@ -51,6 +51,70 @@ def test_validate_names_the_missing_parts():
     ]
 
 
+def test_acceptance_section_parses_each_file_with_its_exact_content():
+    text = ("## Phase 1: X\n\nbuild x\n\n### Acceptance tests\n\n"
+            "`tests/test_accept_a.py`\n```python\ndef test_a():\n    assert True\n```\n\n"
+            "`tests/test_accept_b.py`\n```ts\nexport const x = 1;\n```\n\n"
+            "### Exit criteria\n- a\n\n### Gate\n```\ntrue\n```\n")
+    phases = parse_phases(text)
+    assert phases[0].acceptance == [
+        ("tests/test_accept_a.py", "def test_a():\n    assert True\n"),
+        ("tests/test_accept_b.py", "export const x = 1;\n"),
+    ]
+    assert validate(phases) == []
+
+
+def test_a_phase_without_an_acceptance_section_has_none():
+    phases = parse_phases("## Phase 1: X\nbody\n### Exit criteria\n- a\n"
+                          "### Gate\n```\ntrue\n```\n")
+    assert phases[0].acceptance == []
+
+
+def test_acceptance_path_with_no_code_block_is_kept():
+    text = ("## Phase 1: X\n\n### Acceptance tests\n\n`tests/test_a.py`\n"
+            "### Exit criteria\n- a\n\n### Gate\n```\ntrue\n```\n")
+    assert parse_phases(text)[0].acceptance == [("tests/test_a.py", None)]
+
+
+def test_validate_names_absolute_acceptance_paths():
+    text = ("## Phase 1: X\n\n### Acceptance tests\n\n"
+            "`/abs/x.py`\n```python\nassert True\n```\n\n"
+            "`C:\\abs\\y.py`\n```python\nassert True\n```\n\n"
+            "### Exit criteria\n- a\n\n### Gate\n```\ntrue\n```\n")
+    assert validate(parse_phases(text)) == [
+        "Phase 1's acceptance test path '/abs/x.py' must be relative to the repository root.",
+        "Phase 1's acceptance test path 'C:\\abs\\y.py' must be relative to the repository root.",
+    ]
+
+
+def test_validate_names_acceptance_paths_that_leave_the_repository():
+    text = ("## Phase 1: X\n\n### Acceptance tests\n\n`../x.py`\n"
+            "```python\nassert True\n```\n\n"
+            "### Exit criteria\n- a\n\n### Gate\n```\ntrue\n```\n")
+    assert validate(parse_phases(text)) == [
+        "Phase 1's acceptance test path '../x.py' leaves the repository.",
+    ]
+
+
+def test_validate_names_repeated_acceptance_paths():
+    def phase(n, path):
+        return (f"## Phase {n}: P{n}\n\n### Acceptance tests\n\n`{path}`\n"
+                "```python\nassert True\n```\n\n### Exit criteria\n- a\n\n"
+                "### Gate\n```\ntrue\n```\n")
+    text = phase(1, "tests/test_a.py") + phase(2, "tests/test_a.py")
+    assert validate(parse_phases(text)) == [
+        "Phase 2 repeats the acceptance test path 'tests/test_a.py' from phase 1.",
+    ]
+
+
+def test_validate_names_acceptance_paths_without_a_code_block():
+    text = ("## Phase 1: X\n\n### Acceptance tests\n\n`tests/test_a.py`\n"
+            "### Exit criteria\n- a\n\n### Gate\n```\ntrue\n```\n")
+    assert validate(parse_phases(text)) == [
+        "Phase 1's acceptance test 'tests/test_a.py' has no code block.",
+    ]
+
+
 def test_describe_shows_criteria_and_gate():
     text = describe(parse_phases(EXAMPLE.read_text(encoding="utf-8")))
     assert "Phase 2: Command line interface" in text
