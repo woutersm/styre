@@ -388,6 +388,68 @@ def test_bench_plan_failure_records_the_error_and_skips_the_run(monkeypatch, tmp
     assert not (result_dir / "styre.log").exists()  # the run was skipped, not killed
 
 
+def limit_stream(five_hour, seven_day, five_resets=1793491200, seven_resets=1793746800):
+    """What `claude -p --output-format stream-json --verbose` prints on a subscription: a
+    `rate_limit_event` among the other lines (shape captured 2026-10-31)."""
+    event = {"type": "rate_limit_event", "rate_limit_info": {
+        "status": "allowed", "rateLimitType": "five_hour", "unifiedWindows": {
+            "five_hour": {"utilization": five_hour, "resetsAt": five_resets, "status": "allowed"},
+            "seven_day": {"utilization": seven_day, "resetsAt": seven_resets,
+                          "status": "allowed"}}}}
+    return "\n".join([json.dumps({"type": "system", "subtype": "init"}), json.dumps(event),
+                      json.dumps({"type": "result", "subtype": "success", "is_error": False})])
+
+
+def plan_with_limits(monkeypatch, tmp_path, repo, fake_pi, fake_claude, after):
+    """A planned bench run whose fake claude answers: 1 the limits before, 2 the plan,
+    3 the limits after (`after` is the stream to print)."""
+    pi_config = make_pi_config(tmp_path)
+    replies = tmp_path / "replies"
+    replies.mkdir()
+    (replies / "1.json").write_text(limit_stream(0.23, 0.53), encoding="utf-8")
+    (replies / "2.json").write_text(claude_reply_json(planned_design()), encoding="utf-8")
+    (replies / "3.json").write_text(after, encoding="utf-8")
+    log = bench_env(monkeypatch, tmp_path, fake_pi, fake_claude, pi_config, "ok", replies)
+    design_dir = make_design_dir(tmp_path, repo)
+    design = json.loads((design_dir / "bench.json").read_text(encoding="utf-8"))
+    design["repo"] = str(repo)
+    (design_dir / "bench.json").write_text(json.dumps(design), encoding="utf-8")
+    out = bench.run_bench(design_dir, "brief", f"{sys.executable} -m styre",
+                          tmp_path / "results", pi_config=str(pi_config), plan=True)
+    calls = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+    return json.loads(Path(out["_dir"]).read_text(encoding="utf-8")), calls
+
+
+def test_bench_plan_records_the_subscription_limits_it_used(monkeypatch, tmp_path, repo,
+                                                           fake_pi, fake_claude):
+    result, calls = plan_with_limits(monkeypatch, tmp_path, repo, fake_pi, fake_claude,
+                                     limit_stream(0.51, 0.57))
+    assert result["error"] is None, result["error"]
+    assert result["limits"] == {
+        "five_hour": {"before": 0.23, "after": 0.51, "used": 0.28},
+        "seven_day": {"before": 0.53, "after": 0.57, "used": 0.04}}
+    assert len(calls) == 3  # the probe, the plan, the probe
+    assert "stream-json" in calls[0]["argv"] and "haiku" in calls[0]["argv"]
+    assert "stream-json" in calls[2]["argv"]
+
+
+def test_a_window_that_resets_during_the_plan_has_no_used_value(monkeypatch, tmp_path, repo,
+                                                               fake_pi, fake_claude):
+    result, _ = plan_with_limits(monkeypatch, tmp_path, repo, fake_pi, fake_claude,
+                                 limit_stream(0.05, 0.57, five_resets=1793509200))
+    assert result["limits"]["five_hour"] == {"before": 0.23, "after": 0.05, "used": None}
+    assert result["limits"]["seven_day"]["used"] == 0.04
+
+
+def test_bench_plan_without_limit_events_records_none(monkeypatch, tmp_path, repo, fake_pi,
+                                                      fake_claude):
+    """An API-key account prints no rate_limit_event; the plan's numbers stand alone."""
+    result, _ = plan_with_limits(monkeypatch, tmp_path, repo, fake_pi, fake_claude,
+                                 json.dumps({"type": "result", "subtype": "success"}))
+    assert result["error"] is None, result["error"]
+    assert result["limits"] is None
+
+
 # --- the benchmark report ---------------------------------------------------------
 
 MODEL = {"provider": "splash", "id": "mlx-community/Qwen3.8-27B-4bit",
@@ -449,6 +511,21 @@ def test_report_planned_group_gets_plan_and_frontier_columns(tmp_path):
     assert re.search(r"\| Plan h +\| Frontier tok +\|", planned)
     assert re.search(r"\| 0\.12 +\| 1,250 +\|", planned)  # 0.12 h, 1000 + 250 tokens
     assert re.search(r"Total.*\| 0\.12 +\| 1,250 +\|", planned)  # the total row
+
+
+def test_report_planned_group_shows_the_subscription_limits_used(tmp_path):
+    frontier = {"calls": 1, "tokens_in": 1000, "tokens_out": 10, "cost_usd": 1.0}
+    a = mk_result(tmp_path, "a", planned=True, plan_hours=0.2, frontier=frontier,
+                  limits={"five_hour": {"before": 0.23, "after": 0.51, "used": 0.28},
+                          "seven_day": {"before": 0.53, "after": 0.57, "used": 0.04}})
+    b = mk_result(tmp_path, "b", planned=True, plan_hours=0.1, frontier=frontier,
+                  limits={"five_hour": {"before": 0.9, "after": 0.05, "used": None},
+                          "seven_day": {"before": 0.57, "after": 0.6, "used": 0.03}})
+    rows = [[c.strip() for c in line.strip("|").split("|")]
+            for line in report(tmp_path, a, b).splitlines() if line.startswith("|")]
+    assert rows[0][-2:] == ["5h used", "7d used"]
+    assert [r[-2:] for r in rows[2:]] == [["28%", "4%"], ["reset", "3%"],
+                                          ["28%", "7%"]]  # the total adds the values it has
 
 
 def test_result_without_plan_keys_reads_as_unplanned():

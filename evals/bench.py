@@ -302,6 +302,50 @@ def do_plan(design, repo, styre_cmd, config_dir, plan_log, cap_hours=CAP_HOURS):
     return rc, round((time.time() - started) / 3600, 2)
 
 
+# One tiny call whose only use is the rate_limit_event a subscription account streams. Claude
+# Code sends one such event per call, after its first request, so a call cannot report its
+# own use: the plan is read between a probe before it and a probe after it.
+LIMIT_PROBE = ["-p", "--model", "haiku", "--output-format", "stream-json", "--verbose",
+               "--max-turns", "1", "--tools", "", "--no-session-persistence"]
+
+
+def read_limits(timeout=120):
+    """The Claude subscription's limit windows now, as {window: (utilization, resets_at)}
+    with utilization a fraction, from one probe call. None when the call fails or streams no
+    rate_limit_event (an API-key account has none)."""
+    from styre import settings
+    try:
+        command = list(settings.load()["frontier"]["command"]) + LIMIT_PROBE
+        p = subprocess.run(command, input="Reply with: ok", capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=timeout,
+                           cwd=tempfile.gettempdir())
+    except (OSError, subprocess.SubprocessError, settings.SettingsError):
+        return None
+    limits = None
+    for line in (p.stdout or "").splitlines():
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(event, dict) or event.get("type") != "rate_limit_event":
+            continue
+        windows = (event.get("rate_limit_info") or {}).get("unifiedWindows") or {}
+        limits = {name: (w["utilization"], w.get("resetsAt")) for name, w in windows.items()
+                  if isinstance(w, dict) and isinstance(w.get("utilization"), (int, float))}
+    return limits or None
+
+
+def limits_used(before, after):
+    """The `limits` block: each window's utilization before and after, and the difference
+    as `used`; `used` is None when the window reset in between, so the two do not compare."""
+    if not before or not after:
+        return None
+    return {name: {"before": before[name][0], "after": after[name][0],
+                   "used": (round(after[name][0] - before[name][0], 2)
+                            if before[name][1] == after[name][1] else None)}
+            for name in before if name in after}
+
+
 def last_output_line(log):
     """The last non-blank line of a log file, or None when it has none."""
     try:
@@ -434,7 +478,7 @@ def run_bench(design_dir, variant, styre_cmd, out, pi_config=None, label=None,
         "label": design.get("label"), "setup": read_setup(config_dir),
         "model": read_model(config_dir), "served": None,
         "start": design.get("start"), "started": datetime.now().astimezone().isoformat(),
-        "planned": False, "plan_hours": None, "frontier": None,
+        "planned": False, "plan_hours": None, "frontier": None, "limits": None,
         "hours": None, "exit_code": None, "run_id": None, "phases": design.get("phases"),
         "committed": None, "stopped": None, "error": None, "cap_hours": cap_hours,
         "capped": False,
@@ -447,8 +491,10 @@ def run_bench(design_dir, variant, styre_cmd, out, pi_config=None, label=None,
         result["error"] = do_setup(design, repo, setup_log)
         if result["error"] is None and plan:
             result["styre"] = styre_version(styre_cmd, repo)
+            before = read_limits()
             rc, plan_hours = do_plan(design, repo, styre_cmd, config_dir, plan_log,
                                      cap_hours)
+            result["limits"] = limits_used(before, read_limits())
             result["plan_hours"] = plan_hours
             result["planned"] = rc == 0
             plan_id = latest_id(repo)

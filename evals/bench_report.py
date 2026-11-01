@@ -22,6 +22,9 @@ from styre.summarize import count, rate_cell, table  # noqa: E402
 HEADER = ["Design", "Started", "New", "Keep", "Phases", "Hours",
           "Uncached in", "Cached in", "Cache hit", "Output", "Prefill h", "Decode h",
           "Prefill tok/s", "Decode tok/s"]
+# A planned group's extra columns: the plan's time, its frontier tokens, and how much of the
+# Claude subscription's 5-hour and 7-day windows it used.
+PLANNED_HEADER = ["Plan h", "Frontier tok", "5h used", "7d used"]
 
 
 def load_result(path):
@@ -145,9 +148,21 @@ def frontier_cells(result):
     """The `Plan h` and `Frontier tok` cells (tokens in plus out) for one result."""
     plan_h = hours_cell(result.get("plan_hours"))
     frontier = result.get("frontier")
-    if not frontier:
-        return [plan_h, "-"]
-    return [plan_h, count((frontier.get("tokens_in") or 0) + (frontier.get("tokens_out") or 0))]
+    tokens = (count((frontier.get("tokens_in") or 0) + (frontier.get("tokens_out") or 0))
+              if frontier else "-")
+    return [plan_h, tokens] + [limit_cell(result, w) for w in LIMIT_WINDOWS]
+
+
+LIMIT_WINDOWS = ("five_hour", "seven_day")
+
+
+def limit_cell(result, window):
+    """How much of a subscription window the plan used: `28%`, `reset` when the window reset
+    during the plan, `-` when nothing was read."""
+    w = (result.get("limits") or {}).get(window)
+    if not w:
+        return "-"
+    return "reset" if w.get("used") is None else f"{w['used']:.0%}"
 
 
 def result_row(result, planned=False):
@@ -157,7 +172,7 @@ def result_row(result, planned=False):
     if result.get("error"):
         row += [result["error"]] + ["-"] * (len(HEADER) - 3)
         if planned:
-            row += ["-", "-"]  # the frontier columns the failed result never reached
+            row += ["-"] * len(PLANNED_HEADER)  # columns the failed result never reached
         return row
     row += [pair_cell(result.get("new")), plain_pair_cell(result.get("keep")),
             f"{result.get('committed')}/{result.get('phases')}"
@@ -221,7 +236,9 @@ def total_row(results, planned=False):
         plan_h = sum(r.get("plan_hours") or 0 for r in ok)
         tokens = sum((r.get("frontier") or {}).get("tokens_in", 0)
                      + (r.get("frontier") or {}).get("tokens_out", 0) for r in ok)
-        row += [f"{plan_h:.2f}", count(tokens)]
+        used = [sum(((r.get("limits") or {}).get(w) or {}).get("used") or 0 for r in ok)
+                for w in LIMIT_WINDOWS]
+        row += [f"{plan_h:.2f}", count(tokens)] + [f"{u:.0%}" for u in used]
     return row
 
 
@@ -304,7 +321,7 @@ def render(paths):
                 lines += [s, ""]
         # `planned` is in the key: a group with planned results gets the frontier columns.
         planned = any(r.get("planned") for _p, r in group)
-        header = list(HEADER) + (["Plan h", "Frontier tok"] if planned else [])
+        header = list(HEADER) + (PLANNED_HEADER if planned else [])
         rows = [result_row(r, planned) for _, r in group] + [
             total_row([r for _, r in group], planned)]
         lines += [table(header, rows), ""]

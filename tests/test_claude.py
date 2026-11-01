@@ -131,6 +131,18 @@ def test_budget_error_fixture(monkeypatch, tmp_path, fake_claude):
     assert "Reached maximum budget" in event["error"]
 
 
+def test_usage_limit_fixture_quotes_the_message(monkeypatch, tmp_path, fake_claude):
+    """A subscription out of its 5-hour window answers is_error with subtype "success" and
+    the reason only in `result` (captured 2026-10-31); the error must quote that reason."""
+    result, timeline, log_dir, argv_log = fake_call(
+        monkeypatch, tmp_path, fake_claude,
+        reply=str(FIXTURES / "claude_error_usage_limit.json"))
+    assert result.output is None
+    assert result.error == ("The plan call reported an error: You've hit your 5-hour limit "
+                            "\u00b7 resets 1am (Europe/Amsterdam).")
+    assert read_event(tmp_path / "timeline.jsonl")["error"] == result.error
+
+
 def test_missing_command(monkeypatch, tmp_path, fake_claude):
     monkeypatch.setenv("STYRE_CONFIG", str(tmp_path / "missing" / "styre.json"))
     (tmp_path / "missing").mkdir()

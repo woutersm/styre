@@ -102,9 +102,13 @@ def call(role, prompt, schema, tools, *, cwd, timeline, log_dir, timeout=None) -
         if doc is not None and not isinstance(doc, dict):
             doc = None
         if doc is not None and doc.get("is_error"):
+            # The reason is in `errors`, or only in `result` (a used-up subscription limit
+            # answers subtype "success"); the subtype is the last resort.
             errors = doc.get("errors") or []
-            detail = errors[0] if errors and isinstance(errors[0], str) else \
-                doc.get("subtype") or "an unreported error"
+            text = doc.get("result")
+            detail = (errors[0] if errors and isinstance(errors[0], str)
+                      else text.strip() if isinstance(text, str) and text.strip()
+                      else doc.get("subtype") or "an unreported error")
             error = f"The {role} call reported an error: {detail}."
         if error is None and (doc is None or p.returncode != 0):
             error = (f"The {role} call printed output that is not JSON."

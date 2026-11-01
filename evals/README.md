@@ -84,6 +84,15 @@ the run used the planned design), `"plan_hours"` (the plan call's wall-clock tim
 `cost_usd`); without `--plan` all three stay `false` / `null` / `null`, and `"hours"` is
 always the `styre run` time, never the plan's.
 
+`cost_usd` is Claude Code's list-price figure. On a Claude subscription the plan's cost is
+its share of the usage limits, so `--plan` also records `"limits"`: one tiny `claude -p` call
+(Haiku, one turn) right before the plan and one right after read the 5-hour and 7-day windows
+from the stream's `rate_limit_event`, and each window gets `before`, `after` and `used`, as
+fractions. `used` is `null` when the window reset during the plan. Any other Claude use on
+the account in that time counts too, and the readings move in steps of 1%. An API-key
+account streams no such event, and `limits` stays `null`. The report's planned columns add
+`5h used` and `7d used`.
+
 `bench_report.py` turns the `result.json` files into one markdown report. A path is a
 `result.json`, or a directory (its own `result.json`, else each `*/result.json` one level
 down; it never searches deeper, because result directories hold whole repositories).
