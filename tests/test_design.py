@@ -171,6 +171,27 @@ def test_a_design_that_forbids_the_read_is_not_warned_about_it():
     assert doc_references(preamble(text)) == []
 
 
+def test_a_reading_verb_in_another_list_item_does_not_count():
+    """heim-mcp's planned phase 6, 2026-11-01: the brief's line names `README.md`, the
+    planner's next bullet says `src/index.ts` is read only, and the 160-character window
+    paired the two. `styre plan` threw away a finished plan over it."""
+    text = ("- `test/docs.test.ts` keeps the README true: both `bin` names are in `README.md`.\n"
+            "\n**Where**\n- `src/index.ts` (phases 1 to 5): read only; its exports are listed.")
+    assert doc_references(text) == []
+
+
+def test_a_reading_verb_in_the_same_list_item_still_counts():
+    assert doc_references("- `README.md:82-87` (read only): what `ToolDef` promises.") == [
+        "README.md"]
+
+
+def test_an_acceptance_test_that_reads_a_document_is_not_flagged():
+    """The test reads the file when the gate runs; the builder is never told to open it."""
+    text = design(body='Write `llms.txt`.\n\n### Acceptance tests\n\n`test/docs.test.ts`\n'
+                       '```ts\nconst README = read("README.md");\n```')
+    assert not any("names `README.md`" in n for n in advisories(text, parse_phases(text)))
+
+
 def test_the_designs_own_filename_and_the_contract_files_are_not_flagged():
     text = design("Read `plan.md` and append to `docs/decisions.md`; see `AGENTS.md`.")
     assert doc_references(preamble(text), design_path="docs/plan.md") == []

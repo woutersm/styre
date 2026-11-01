@@ -55,6 +55,7 @@ rest of the step.
 | A phase named a new library without an example. Every step spent about 12 `python -c` calls learning its API, and 80% of the phase's output was thinking. | `styre check` flags a new dependency that has no code example. [`skills/styre/writing-designs.md`](../skills/styre/writing-designs.md) says what a phase must give the agent. |
 | Six of seven phases gated in two toolchains, a backend and its UI, peaked at 74k to 116k tokens, past the restart line. | `styre check` names those phases once. The heuristic it replaced flagged 12 phases, of which 6 ran large. |
 | A warning for large phases, by prompt size or number of criteria, flagged 5 phases. None of them went badly. | The warning was deleted. [`evals/advisories.py`](../evals/advisories.py) scores every warning against the run history. |
+| `styre plan` refuses a planned design that adds a warning. On heim-mcp it refused a finished plan (a $4.87 list-price call, 32% of the 5-hour limit) because one bullet's "read only", about `src/index.ts`, sat within 160 characters of `README.md` in the bullet above. | The reading verb must sit in the paragraph or list item that names the document. Acceptance-test code is left out of the check: it reads files when the gate runs. |
 
 ## Evaluating it
 
