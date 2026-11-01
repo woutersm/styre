@@ -36,7 +36,7 @@ migration runs.
 | `styre/cli.py` | The `design` and `simplify` (open interactive `claude` on `/styre-design` and `/styre-simplify`), `check`, `plan`, `run` and `summarize` subcommands; the `styre` console script. |
 | `styre/claude.py` | `claude.call()` for frontier calls with a role, a JSON schema, tools and a timeline line; the settings load. |
 | `styre/settings.py` | The `styre.json` load: the frontier command and its timeout. |
-| `styre/planner.py` | `planner.problems()`: the check that the planned design kept every line, gate, criteria list and advisory of the brief; `PLAN_SCHEMA`.
+| `styre/planner.py` | `planner.problems()`: the check that the planned design kept every line, gate and criteria list of the brief; `PLAN_SCHEMA`.
 | `tests/fake_claude.py` | Test double for `claude`, installed on `PATH` like `fake_pi.py`. |
 | `styre/config.py` | Constants (`PI`, `PI_CONFIG_DIR`, `WORK`, `DECISIONS`, `AGENTS`, `EXCLUDES`, the context fractions), `context_window()`, and the `RunOptions` bundle. |
 | `styre/design.py` | Parsing a design into `Phase` objects; `phase_context()`; `validate()` (errors) and `advisories()` (warnings); the `check` rendering. |

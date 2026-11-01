@@ -137,8 +137,8 @@ the phase touches, the signatures it calls, what to copy from, the traps. `styre
 <design.md>` sends the design to `claude -p` with read-only tools (Read, Grep, Glob), asks it to
 return the whole design with that help added, and then styre checks the answer itself: it still
 validates, the phases, their titles, gates and exit criteria are unchanged, every line of the
-brief is still there (the help is additive only), and no new warning. An answer that drops or
-edits the brief is sent back once with the list of what broke; still broken, and the command
+brief is still there (the help is additive only), and no phase prompt is over 40,000
+characters. An answer that drops or edits the brief is sent back once with the list of what broke; still broken, and the command
 exits 1 with the brief untouched.
 
 A good answer replaces the design file and becomes one commit, `Plan: <design name>`, on your

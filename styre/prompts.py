@@ -114,7 +114,8 @@ For each phase, add under its text:
 
 Do not write the phase's own code: a snippet shows a library's calls, never the change the
 phase makes. Put what every phase needs in the preamble and everything else in the one phase
-that needs it. Do not tell the builder to read a document. Return the design in the
+that needs it. Do not tell the builder to read a document: when a phase needs lines from one,
+such as a README its tests check, quote those lines in the phase. Return the design in the
 `design` field.
 
 <brief>
