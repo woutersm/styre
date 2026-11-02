@@ -64,6 +64,19 @@ def test_acceptance_section_parses_each_file_with_its_exact_content():
     assert validate(phases) == []
 
 
+def test_a_triple_backtick_inside_a_line_does_not_end_the_block():
+    """heim-mcp's phase 6, 2026-11-01: the test held `text.indexOf("```", at)`. styre ended
+    the block there, wrote a 16-line stub over the builder's repair before every gate run,
+    and the phase stopped after 2 fix rounds. Only a fence on a line of its own closes."""
+    code = ('const open = text.indexOf("```", at);\n'
+            'const close = text.indexOf("```", open + 3);\n')
+    text = ("## Phase 1: X\n\n### Acceptance tests\n\n`test/docs.test.ts`\n```ts\n" + code +
+            "```\n\n### Exit criteria\n- a\n\n### Gate\n```\ntrue\n```\n")
+    phase = parse_phases(text)[0]
+    assert phase.acceptance == [("test/docs.test.ts", code)]
+    assert phase.gate == ["true"]
+
+
 def test_a_phase_without_an_acceptance_section_has_none():
     phases = parse_phases("## Phase 1: X\nbody\n### Exit criteria\n- a\n"
                           "### Gate\n```\ntrue\n```\n")

@@ -36,6 +36,7 @@ rest of the step.
 | --- | --- |
 | styre stopped at the first failing gate command. `ruff` failed a 3-hour phase while mypy, the tests and the build had not run, so each fix round found one more failure. | styre runs every gate command and hands the fix round all failures at once. A whole gate takes about 40 seconds. A fix round is a fresh process. |
 | A design told the agent to skip a test on non-macOS. The agent did, and the test guard rejected the phase. | `styre check` flags a design that asks for a skip marker before the run starts. |
+| heim-mcp's phase 6 acceptance test held `indexOf("```")`. styre ended the code block there and wrote a 16-line stub of a 146-line test before every gate run, over the builder's repair. The phase stopped after 2 fix rounds, 90/96. | A code block ends only at a fence on a line of its own, as in markdown. |
 | The agent's decisions log was passed to later phases. Most of each section repeated what the tree showed, and the rest was status the gate had already proved. | The log is written but never sent to an agent. `notes-next.md`, written for the next phase only, is the one channel between phases. |
 
 ## Running unattended

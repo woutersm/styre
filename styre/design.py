@@ -84,7 +84,10 @@ SKIP_RE = re.compile(r"\b(?:skipif|xfail|xit)\b"
 TEST_WORD_RE = re.compile(r"\b(test|tests|pytest|unittest|suite|spec)\b", re.I)
 SKIP_WINDOW = 120
 SECTION_RE = re.compile(r"(?m)^###\s+(.+?)\s*$")
-FENCE_RE = re.compile(r"```[a-z]*\n(.*?)```", re.S)
+# A fenced block: the opening and closing fences each on a line of their own, as markdown
+# has it. A ``` inside a line is code: heim-mcp's phase 6 test held `indexOf("```")`, and
+# ending the block there wrote a 16-line stub of a 153-line test (2026-11-01).
+FENCE_RE = re.compile(r"^[ \t]*(`{3,})[\w+-]*[ \t]*\n(.*?)^[ \t]*\1[ \t]*$", re.S | re.M)
 # A backticked token on a line of its own: the path line of an acceptance test.
 ACCEPT_PATH_RE = re.compile(r"^(?P<p>`[^`]+`)\s*$")
 
@@ -116,7 +119,7 @@ def parse_phases(text):
         criteria = [ln.strip()[2:].strip() for ln in named.get("exit criteria", "").splitlines()
                     if ln.strip().startswith(("- ", "* "))]
         block = FENCE_RE.search(named.get("gate", ""))
-        gate = [ln.strip() for ln in (block.group(1) if block else "").splitlines()
+        gate = [ln.strip() for ln in (block.group(2) if block else "").splitlines()
                 if ln.strip() and not ln.strip().startswith("#")]
         phases.append(Phase(title=title, body=body, criteria=criteria, gate=gate,
                             acceptance=parse_acceptance(named.get("acceptance tests", ""))))
@@ -136,7 +139,7 @@ def parse_acceptance(section):
     for n, i in enumerate(paths):
         stop = paths[n + 1] if n + 1 < len(paths) else len(lines)
         fence = FENCE_RE.search("\n".join(lines[i + 1:stop]))
-        out.append((lines[i].strip()[1:-1], fence.group(1) if fence else None))
+        out.append((lines[i].strip()[1:-1], fence.group(2) if fence else None))
     return out
 
 
