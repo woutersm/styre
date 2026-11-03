@@ -60,6 +60,17 @@ _Avoid_: compaction, restart
 The end of a run before the last phase, left for the person to read.
 _Avoid_: crash, failure (for the run as a whole)
 
+**Stall**:
+A stop caused by the builder's work, not by the host: the gate still red after the fix
+rounds, a relay that is stuck or too big, BLOCKED, a missing or contradictory state file, or
+no diff. styre hands a stall to the advisor instead of ending the run.
+_Avoid_: stuck, failure
+
+**Host failure**:
+A stop caused by the model host or the process: an empty response, pi exiting non-zero, or
+the idle timeout. It ends the run as before; no advisor call.
+_Avoid_: crash
+
 ## Roles
 
 **Builder**:
@@ -70,7 +81,24 @@ _Avoid_: agent (when the role matters), worker
 The frontier model, through Claude Code, that turns a brief into a planned design.
 
 **Advisor**:
-The frontier model, called when a phase stalls, choosing one of a fixed set of actions.
+The frontier model, called when a phase stalls, choosing one action: amend, split, patch or
+stop.
+
+**Advice**:
+What the advisor returns for one stall: its action and the text that goes with it. Kept in
+the run directory; the design file is never changed by it.
+_Avoid_: escalation (for the answer), suggestion
+
+**Amend**:
+The action that adds text to the stalled phase's prompt, then runs the phase again.
+
+**Split**:
+The action that replaces the stalled phase, in this run only, with two or three smaller
+phases the advisor writes.
+
+**Patch**:
+The action in which the advisor edits the code itself; styre then runs the gate and commits
+the phase with a `Styre-Advisor: patch` trailer.
 
 **Reviewer**:
 The frontier model, called at a milestone's end to review the committed work.
