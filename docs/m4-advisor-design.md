@@ -75,7 +75,7 @@ Rules for the whole milestone:
   - When it prints nothing, `claude.call("advisor", ...)` fails with `The advisor call printed output that is not JSON.`
 - A good reply is `tests/fixtures/claude_read_tools.json` loaded with `json.loads`, with its `structured_output` replaced by the answer. `claude.call` returns that dict as `result.output`.
 - A test that reaches `claude.call` sets `STYRE_CONFIG` to a `styre.json` in `tmp_path` holding `{"frontier": {"command": ["claude"], "timeout": 60}}`, and puts the fake first on `PATH`. Without `STYRE_CONFIG`, `settings.load()` reads `~/.config/styre/styre.json`.
-- An end-to-end test file has `pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="the fixtures' gate uses `test -f`")`, as `tests/test_run_end_to_end.py:10` does.
+- Add no skip or xfail marker to a test file, not even the Windows marker `tests/test_run_end_to_end.py:10` has: the test guard rejects an added one, and CI runs on Linux and macOS only.
 
 ---
 
@@ -243,6 +243,7 @@ from styre.advisor import (
     schema,
     split_problems,
 )
+
 from styre.design import parse_phases
 from styre.prompts import advisor_prompt
 from styre.timeline import Timeline
@@ -674,10 +675,8 @@ The whole loop runs against tests/fake_pi.py and tests/fake_claude.py; no test c
 """
 import inspect
 import json
-import sys
 from pathlib import Path
 
-import pytest
 from conftest import DESIGN
 
 from styre.design import parse_phases
@@ -685,8 +684,6 @@ from styre.gitops import diff_stat
 from styre.prompts import advice_prompt
 from styre.rundir import RunDir
 from styre.runner import PhaseResult, run_phase
-
-pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="the fixtures' gate uses `test -f`")
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 BLOCKED = "BLOCKED: the design does not say which format to use"
@@ -1020,18 +1017,14 @@ The whole loop runs against tests/fake_pi.py and tests/fake_claude.py; no test c
 """
 import json
 import subprocess
-import sys
 from pathlib import Path
 
-import pytest
 from conftest import DESIGN
-
 from styre.advisor import PATCH_SCHEMA, PATCH_TOOLS, Advice, Stall, patch
+
 from styre.design import parse_phases
 from styre.prompts import patch_prompt
 from styre.timeline import Timeline
-
-pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="the fixtures' gate uses `test -f`")
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 FENCE = "`" * 3
@@ -1340,16 +1333,12 @@ The whole loop runs against tests/fake_pi.py and tests/fake_claude.py; no test c
 import inspect
 import json
 import subprocess
-import sys
 from pathlib import Path
 
-import pytest
 from conftest import DESIGN
 
 from styre.rundir import RunDir
 from styre.runner import run_phase
-
-pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="the fixtures' gate uses `test -f`")
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 FENCE = "`" * 3
