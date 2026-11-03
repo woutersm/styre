@@ -227,12 +227,30 @@ def test_problems_names_missing_or_renamed_phases():
     assert any("Phase 2's title changed" in p for p in planner.problems(DESIGN, renamed))
 
 
-def test_problems_names_a_new_advisory():
-    advisory = planned_design().replace(
+def advisory_design():
+    """The planned design plus a preamble line `styre check` warns about."""
+    return planned_design().replace(
         "Preamble every phase needs.",
         "Preamble every phase needs.\nRead `docs/agent-design.md` first; it explains the API.")
-    assert any("new advisory" in p and "agent-design.md" in p
-               for p in planner.problems(DESIGN, advisory))
+
+
+def test_a_new_advisory_is_not_a_problem():
+    """heim-mcp, 2026-11-01: three finished plans were refused over a warning that the
+    planner pointed phases at README.md line ranges. A warning is for the person who
+    approves the plan, not a reason to throw it away."""
+    assert planner.problems(DESIGN, advisory_design()) == []
+
+
+def test_a_new_advisory_is_committed_and_printed(tmp_path, monkeypatch, fake_claude, plan_repo):
+    reply = tmp_path / "planned.json"
+    reply.write_text(json.dumps(
+        {"type": "result", "is_error": False,
+         "structured_output": {"design": advisory_design()}}), encoding="utf-8")
+    rc, out, err = run_plan(plan_repo, fake_claude, tmp_path, monkeypatch, reply=str(reply))
+    assert rc == 0, err
+    assert len(call_stdins(tmp_path / "fake_claude.log")) == 1  # no retry
+    assert any("⚠" in ln and "docs/agent-design.md" in ln for ln in out.splitlines())
+    assert (plan_repo / "design.md").read_text(encoding="utf-8") == advisory_design()
 
 
 def test_problems_names_an_overlong_phase_prompt():
@@ -344,6 +362,13 @@ def test_planner_prompt_asks_for_acceptance_tests_per_phase():
     assert "one test per rule the brief states" in text
     assert "Nothing the brief does not state" in text
     assert "keep it as it is" in text  # a brief's own section survives planning
+
+
+def test_planner_prompt_says_to_quote_a_document_not_point_at_it():
+    from styre.prompts import planner_prompt
+    text = planner_prompt(DESIGN, None)
+    assert "Do not tell the builder to read a document" in text
+    assert "quote those lines in the phase" in text
 
 
 def test_dirty_tree_is_refused_before_any_call(tmp_path, monkeypatch, fake_claude, plan_repo):

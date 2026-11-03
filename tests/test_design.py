@@ -64,6 +64,19 @@ def test_acceptance_section_parses_each_file_with_its_exact_content():
     assert validate(phases) == []
 
 
+def test_a_triple_backtick_inside_a_line_does_not_end_the_block():
+    """heim-mcp's phase 6, 2026-11-01: the test held `text.indexOf("```", at)`. styre ended
+    the block there, wrote a 16-line stub over the builder's repair before every gate run,
+    and the phase stopped after 2 fix rounds. Only a fence on a line of its own closes."""
+    code = ('const open = text.indexOf("```", at);\n'
+            'const close = text.indexOf("```", open + 3);\n')
+    text = ("## Phase 1: X\n\n### Acceptance tests\n\n`test/docs.test.ts`\n```ts\n" + code +
+            "```\n\n### Exit criteria\n- a\n\n### Gate\n```\ntrue\n```\n")
+    phase = parse_phases(text)[0]
+    assert phase.acceptance == [("test/docs.test.ts", code)]
+    assert phase.gate == ["true"]
+
+
 def test_a_phase_without_an_acceptance_section_has_none():
     phases = parse_phases("## Phase 1: X\nbody\n### Exit criteria\n- a\n"
                           "### Gate\n```\ntrue\n```\n")
@@ -169,6 +182,27 @@ def test_a_design_that_forbids_the_read_is_not_warned_about_it():
     """Warning about the fix would teach the reader to ignore the warning."""
     text = design("**Do not open anything in `docs/`** — not `agent-design.md`.")
     assert doc_references(preamble(text)) == []
+
+
+def test_a_reading_verb_in_another_list_item_does_not_count():
+    """heim-mcp's planned phase 6, 2026-11-01: the brief's line names `README.md`, the
+    planner's next bullet says `src/index.ts` is read only, and the 160-character window
+    paired the two. `styre plan` threw away a finished plan over it."""
+    text = ("- `test/docs.test.ts` keeps the README true: both `bin` names are in `README.md`.\n"
+            "\n**Where**\n- `src/index.ts` (phases 1 to 5): read only; its exports are listed.")
+    assert doc_references(text) == []
+
+
+def test_a_reading_verb_in_the_same_list_item_still_counts():
+    assert doc_references("- `README.md:82-87` (read only): what `ToolDef` promises.") == [
+        "README.md"]
+
+
+def test_an_acceptance_test_that_reads_a_document_is_not_flagged():
+    """The test reads the file when the gate runs; the builder is never told to open it."""
+    text = design(body='Write `llms.txt`.\n\n### Acceptance tests\n\n`test/docs.test.ts`\n'
+                       '```ts\nconst README = read("README.md");\n```')
+    assert not any("names `README.md`" in n for n in advisories(text, parse_phases(text)))
 
 
 def test_the_designs_own_filename_and_the_contract_files_are_not_flagged():

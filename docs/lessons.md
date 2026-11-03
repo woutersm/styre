@@ -36,6 +36,7 @@ rest of the step.
 | --- | --- |
 | styre stopped at the first failing gate command. `ruff` failed a 3-hour phase while mypy, the tests and the build had not run, so each fix round found one more failure. | styre runs every gate command and hands the fix round all failures at once. A whole gate takes about 40 seconds. A fix round is a fresh process. |
 | A design told the agent to skip a test on non-macOS. The agent did, and the test guard rejected the phase. | `styre check` flags a design that asks for a skip marker before the run starts. |
+| heim-mcp's phase 6 acceptance test held `indexOf("```")`. styre ended the code block there and wrote a 16-line stub of a 146-line test before every gate run, over the builder's repair. The phase stopped after 2 fix rounds, 90/96. | A code block ends only at a fence on a line of its own, as in markdown. |
 | The agent's decisions log was passed to later phases. Most of each section repeated what the tree showed, and the rest was status the gate had already proved. | The log is written but never sent to an agent. `notes-next.md`, written for the next phase only, is the one channel between phases. |
 
 ## Running unattended
@@ -55,6 +56,7 @@ rest of the step.
 | A phase named a new library without an example. Every step spent about 12 `python -c` calls learning its API, and 80% of the phase's output was thinking. | `styre check` flags a new dependency that has no code example. [`skills/styre/writing-designs.md`](../skills/styre/writing-designs.md) says what a phase must give the agent. |
 | Six of seven phases gated in two toolchains, a backend and its UI, peaked at 74k to 116k tokens, past the restart line. | `styre check` names those phases once. The heuristic it replaced flagged 12 phases, of which 6 ran large. |
 | A warning for large phases, by prompt size or number of criteria, flagged 5 phases. None of them went badly. | The warning was deleted. [`evals/advisories.py`](../evals/advisories.py) scores every warning against the run history. |
+| `styre plan` refuses a planned design that adds a warning. On heim-mcp it refused a finished plan (a $4.87 list-price call, 32% of the 5-hour limit) because one bullet's "read only", about `src/index.ts`, sat within 160 characters of `README.md` in the bullet above. | The reading verb must sit in the paragraph or list item that names the document. Acceptance-test code is left out of the check: it reads files when the gate runs. Two more plans were refused for pointing phases at `README.md` line ranges on purpose, so a new warning no longer refuses a plan: `styre plan` prints it, and the planner prompt says to quote a document's lines in the phase. |
 
 ## Evaluating it
 

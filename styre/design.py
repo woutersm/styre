@@ -45,6 +45,11 @@ NOT_RE = re.compile(r"\b(do not|don't|never|no need to|rather than|instead of|wi
                     re.I)
 READ_WINDOW = 160
 NEGATION_WINDOW = 40
+# The verb must also sit in the paragraph or list item that names the document. On
+# 2026-11-01 heim-mcp's planned phase 6 named `README.md` in one bullet and called
+# `src/index.ts` "read only" in the next; the bare window paired them and `styre plan`
+# threw away a finished plan.
+BLOCK_RE = re.compile(r"\n\s*\n|\n\s*(?:[-*]|\d+\.)\s")
 # A phase gated by two toolchains at once — the gate runs in the root *and* in `cd ui` — is
 # a phase that changes a backend and the UI that shows it. Measured over a real project's 44 phases with
 # a design on record (2026-09-29): 6 of the 7 such phases peaked at 74-116k context, past the
@@ -79,7 +84,10 @@ SKIP_RE = re.compile(r"\b(?:skipif|xfail|xit)\b"
 TEST_WORD_RE = re.compile(r"\b(test|tests|pytest|unittest|suite|spec)\b", re.I)
 SKIP_WINDOW = 120
 SECTION_RE = re.compile(r"(?m)^###\s+(.+?)\s*$")
-FENCE_RE = re.compile(r"```[a-z]*\n(.*?)```", re.S)
+# A fenced block: the opening and closing fences each on a line of their own, as markdown
+# has it. A ``` inside a line is code: heim-mcp's phase 6 test held `indexOf("```")`, and
+# ending the block there wrote a 16-line stub of a 153-line test (2026-11-01).
+FENCE_RE = re.compile(r"^[ \t]*(`{3,})[\w+-]*[ \t]*\n(.*?)^[ \t]*\1[ \t]*$", re.S | re.M)
 # A backticked token on a line of its own: the path line of an acceptance test.
 ACCEPT_PATH_RE = re.compile(r"^(?P<p>`[^`]+`)\s*$")
 
@@ -111,7 +119,7 @@ def parse_phases(text):
         criteria = [ln.strip()[2:].strip() for ln in named.get("exit criteria", "").splitlines()
                     if ln.strip().startswith(("- ", "* "))]
         block = FENCE_RE.search(named.get("gate", ""))
-        gate = [ln.strip() for ln in (block.group(1) if block else "").splitlines()
+        gate = [ln.strip() for ln in (block.group(2) if block else "").splitlines()
                 if ln.strip() and not ln.strip().startswith("#")]
         phases.append(Phase(title=title, body=body, criteria=criteria, gate=gate,
                             acceptance=parse_acceptance(named.get("acceptance tests", ""))))
@@ -131,7 +139,7 @@ def parse_acceptance(section):
     for n, i in enumerate(paths):
         stop = paths[n + 1] if n + 1 < len(paths) else len(lines)
         fence = FENCE_RE.search("\n".join(lines[i + 1:stop]))
-        out.append((lines[i].strip()[1:-1], fence.group(1) if fence else None))
+        out.append((lines[i].strip()[1:-1], fence.group(2) if fence else None))
     return out
 
 
@@ -185,20 +193,32 @@ def doc_references(text, design_path=""):
     throughout, because structurally it was.
     """
     own = design_path.replace("\\", "/").split("/")[-1] if design_path else ""
+    edges = [(b.start(), b.end()) for b in BLOCK_RE.finditer(text)]
     found, seen = [], set()
     for m in DOC_RE.finditer(text):
         doc = m.group(1)
         name = doc.split("/")[-1]
         if name in CONTRACT_DOCS or name == own or name in seen:
             continue
-        lo = max(0, m.start() - READ_WINDOW)
-        near = text[lo:m.end() + READ_WINDOW]
+        lo = max([end for start, end in edges if end <= m.start()]
+                 + [m.start() - READ_WINDOW, 0])
+        hi = min([start for start, end in edges if start >= m.end()]
+                 + [m.end() + READ_WINDOW])
+        near = text[lo:hi]
         if not any(not NOT_RE.search(near[max(0, r.start() - NEGATION_WINDOW):r.start()])
                    for r in READ_RE.finditer(near)):
             continue  # every reading verb nearby is negated: the design forbids the read
         seen.add(name)
         found.append(doc)
     return found
+
+
+def without_acceptance(body):
+    """A phase's text without its acceptance tests. Test code that reads a document reads
+    it when the gate runs; the builder is not told to open it."""
+    parts = SECTION_RE.split(body)
+    return parts[0] + "".join(f"### {parts[j]}{parts[j + 1]}" for j in range(1, len(parts), 2)
+                              if parts[j].strip().lower() != "acceptance tests")
 
 
 def skip_requests(text):
@@ -285,7 +305,7 @@ def advisories(text, phases, design_path="", root=None):
                        "    The test guard rejects an added skip or xfail marker, so this "
                        "phase fails verification\n    for doing what the design told it "
                        "to. Drop the instruction, or run with --allow-test-changes.")
-        docs = doc_references(phase.body, design_path)
+        docs = doc_references(without_acceptance(phase.body), design_path)
         if docs:
             out.append(f"Phase {i} names " + ", ".join(f"`{d}`" for d in docs)
                        + " — check the agent is meant to write it, not read it.")

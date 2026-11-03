@@ -3,12 +3,14 @@
 `claude.call` returns the whole planned design as text. The planner is told to add lines and
 never edit or remove them, but the model is not the gate: `problems()` re-parses the answer
 and says, one sentence each, every line of the brief that is missing, every gate, criteria
-list, title or phase count that changed, every advisory the planner added, and every phase
-whose prompt grew past the budget. Empty means the planned design may replace the brief.
+list, title or phase count that changed, and every phase whose prompt grew past the budget.
+Empty means the planned design may replace the brief. A warning the planner added is not a
+problem: `styre plan` prints it for the person who approves the plan. Refusing on warnings
+threw away three finished heim-mcp plans on 2026-11-01.
 """
 from __future__ import annotations
 
-from styre.design import advisories, parse_phases, phase_context, preamble, validate
+from styre.design import parse_phases, phase_context, preamble, validate
 
 PLAN_SCHEMA = {"type": "object", "properties": {"design": {"type": "string"}},
                "required": ["design"], "additionalProperties": False}
@@ -57,11 +59,6 @@ def problems(brief, planned):
         if b.criteria != p.criteria:
             out.append(f"Phase {i} changed the brief's exit criteria: "
                        f"{b.criteria} became {p.criteria}.")
-
-    had = set(advisories(brief, bph))
-    for a in advisories(planned, pph):
-        if a not in had:
-            out.append(f"The planned design adds a new advisory: {a.splitlines()[0]}.")
 
     for i in range(1, len(pph) + 1):
         size = len(phase_context(planned, pph, i))
