@@ -213,3 +213,14 @@ implementing the nine design steps, plus a CLI in `main()`.
   directories as the project's terms and the decisions behind the design; the ADR
   numbering is M3's, but the row is lifetime-stable, so it names the kind of file, not
   the count.
+
+## Phase 1: The advisor's call and its checks
+
+- `split_problems` short-circuits on a wrong phase count (1 or 4+): the title, validate and
+  last-phase checks cannot line up, and the count sentence is returned alone.
+- `check` reports a missing (not just blank) `text` for amend/split/patch as the empty-text
+  sentence, per the design's single sentence; a non-string `text` is treated as `""`.
+- `advisor_prompt` reads the `Stall` by attribute (not by type) so `styre/prompts.py` never
+  imports `styre.advisor` back — the module would otherwise be circular.
+- A `check()` refusal triggers the retry; a `claude.call` error (call failed) does not,
+  mirroring `styre/cli.py`'s planner retry.

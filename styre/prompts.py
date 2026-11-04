@@ -130,6 +130,58 @@ def _progress_block(progress):
 </your_progress_file>"""
 
 
+def advisor_prompt(stall, actions):
+    """The advisor prompt for one stalled phase: the stall, what it can read, and the
+    actions it may choose from, one line each, only those in `actions`. `stall` is read
+    by attribute; `styre.advisor` imports this, so this module must not import it back."""
+    action_lines = {
+        "amend": ("- amend: the builder lacked a fact, a file, a signature or a rule. `text` is "
+                  "what the builder reads before it starts again on the tree as it is now."),
+        "split": ("- split: the phase is too big for one context. `text` holds 2 or 3 sections "
+                  f"in the design format, titled `## Phase {stall.n}.1: ...`, `## Phase {stall.n}.2: ...`, "
+                  "each with its text, a `### Exit criteria` list and a `### Gate` block. The last one "
+                  "keeps the phase's gate, exit criteria and `### Acceptance tests` section unchanged. "
+                  "The earlier ones get their own gate, green on their own work, and no acceptance "
+                  "tests."),
+        "patch": ("- patch: one hard part the builder will not get right. `text` is the diagnosis: "
+                  "what is wrong and what to change. A second call makes the edit."),
+        "stop": ("- stop: the design is wrong, or the stall needs the person. `reason` says what "
+                  "the person has to decide."),
+    }
+    lines = "\n".join(action_lines[a] for a in actions)
+    return f"""A local model, through the pi coding agent, built one phase of a design unattended, and
+the phase stalled. Nobody is watching; the person reads the run later. You are the advisor:
+you read the repository with Read, Grep and Glob, and you edit nothing. You answer once for
+this phase.
+
+The stall: {stall.reason}
+
+<phase>
+{stall.context}
+</phase>
+
+<progress>
+{stall.progress or "(none)"}
+</progress>
+
+<gate_report>
+{stall.gate_report or "(none)"}
+</gate_report>
+
+<uncommitted>
+{stall.diff_stat or "(nothing uncommitted)"}
+</uncommitted>
+
+The phase's readable log is {stall.log}; its end is the most recent.
+
+Choose one action, only these:
+{lines}
+
+The uncommitted work stays in the tree. The design file is not changed. You answer once
+for this phase. `reason` is one paragraph for the person; `text` is empty for `stop` only.
+"""
+
+
 def fix_prompt(n, phase, failure, progress=""):
     """The fix-round prompt for a fresh pi process, attached after the phase's own prompt.
 
