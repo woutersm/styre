@@ -276,3 +276,18 @@ implementing the nine design steps, plus a CLI in `main()`.
 - The `advice` timeline event carries `titles` only for a split; `summarize` prints
   `- the advisor split it into: t1; t2` and stores 3-tuples for split entries in
   `Phase.advice`.
+
+## Phase 5: Docs
+
+- The "One phase" flowchart in `docs/architecture.md` now has one `advisor` node that the
+  four stall edges (relay stuck, BLOCKED/missing state, no diff, retries used up) point at;
+  its `stop` edge and its `amend or split`/`patch` edges are what keep the phase or end the
+  run. The `stop` node keeps its `stop: work left uncommitted` label on the host-failure
+  edge (pi exited non-zero or went silent), and the empty-response edge was split off the
+  BLOCKED/missing edge, which it shared before M4.
+- Wording choice: `CLAUDE.md` step 7 and the DIRECTOR/SKILL rule texts say "stall" for the
+  builder-caused stops the advisor takes up, and "host failure" for the ones that still end
+  the run — matching the milestone's vocabulary rather than inventing a new one.
+- `CLAUDE.md` "Decisions that are settled": the "until a role exists" bullet now says the
+  advisor (M4) takes what a stall needs and the director keeps reviewing a run until M5,
+  instead of naming both as pending.

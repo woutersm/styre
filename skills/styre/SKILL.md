@@ -23,7 +23,9 @@ Read beside this file, before acting:
    macOS). Then one background watcher that waits on the styre process and ends with it —
    no polling, no requests to the model host while it runs.
 3. **Stop.** Read the stop reason (`styre summarize`, its "Where to look") and that phase's
-   archived progress file, nothing more. Then the ladder in `DIRECTOR.md` rule 3. To change a
+   archived progress file, nothing more. A stop after advice names the action and its
+   reason — amend, split, patch or stop — and a patch commit carries `Styre-Advisor: patch`.
+   Then the ladder in `DIRECTOR.md` rule 3. To change a
    phase: let the running phase commit or stop, stop the run, edit and commit the design,
    `styre run <design> --from-phase N`. Never edit a design under a live run.
 4. **Done.** One review of the branch against its base; the new tests first. Fix findings

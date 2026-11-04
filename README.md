@@ -16,7 +16,7 @@ phase is done.
 styre v2 orchestrates a local coding agent with Claude Code as planner, advisor and
 reviewer. styre commits a phase only when its gate passes: your build, lint and tests.
 
-> v2 is in progress. The planner (`styre plan`) is built. The advisor and the reviewer are
+> v2 is in progress. The planner (`styre plan`) and the advisor are built; the reviewer is
 > not. Reference setup: Qwen3.8-27B through pi, and Claude Code on Opus 5.5. The plan and
 > its milestones are in [`docs/v2.md`](docs/v2.md).
 
