@@ -213,3 +213,81 @@ implementing the nine design steps, plus a CLI in `main()`.
   directories as the project's terms and the decisions behind the design; the ADR
   numbering is M3's, but the row is lifetime-stable, so it names the kind of file, not
   the count.
+
+## Phase 1: The advisor's call and its checks
+
+- `split_problems` short-circuits on a wrong phase count (1 or 4+): the title, validate and
+  last-phase checks cannot line up, and the count sentence is returned alone.
+- `check` reports a missing (not just blank) `text` for amend/split/patch as the empty-text
+  sentence, per the design's single sentence; a non-string `text` is treated as `""`.
+- `advisor_prompt` reads the `Stall` by attribute (not by type) so `styre/prompts.py` never
+  imports `styre.advisor` back — the module would otherwise be circular.
+- A `check()` refusal triggers the retry; a `claude.call` error (call failed) does not,
+  mirroring `styre/cli.py`'s planner retry.
+
+## Phase 2: Stalls go to the advisor: amend and stop
+
+- `run_phase` now returns a `PhaseResult` and takes `advice`/`after`. A stalled attempt's
+  `rounds`/`relays` are the phase totals (fix-round file names continue), but the limits
+  (`--retries`, `MAX_RELAYS`) count the amended attempt's own work only, per the design's
+  "the limits count the amended attempt's own". This is why the loop keeps private
+  `own_rounds`/`own_relays` counters.
+- The five stall kinds are everything in `run_phase` except the `rc != 0` branch and the
+  empty-response branch, which are host failures (`stall=False`) and never reach the
+  advisor.
+- `PhaseResult.gate_report` holds the last gate failure's full report (the `full` half of
+  `verify`'s result); an early stop before any gate run has `""`.
+- `conftest.py`'s `styre` fixture now requests `fake_claude` and points `STYRE_CONFIG` at a
+  settings file in `repo.parent`, so every stall in every end-to-end test reaches the fake
+  `claude` (which prints nothing unless a test sets `FAKE_CLAUDE_REPLY`) and stops with
+  "The advisor could not be asked: ...".
+- `diff_stat()` stages before diffing because untracked files have no `--cached` diff until
+  staged; the staged index is harmless, the phase commit block re-stages.
+
+## Phase 3: Patch
+
+- The commit block of `run_phase` moved into `commit_phase(ctx, n, phase, patched=False)`:
+  it stages, applies the no-staged-diff rule, commits and writes the `commit` event in one
+  place. The patch path passes `patched=True`, which adds the `Styre-Advisor: patch` trailer
+  (`git commit -m` takes the blank line and trailer unchanged) and sets `patch=True` on the
+  event; `summarize` reads that as `Phase.patched` and prints `committed (patch)`.
+- A red patch gate stops the run with its own `phase_end` (status `stopped`) rather than
+  going through a builder fix round — the phase's stall was already the last attempt of it,
+  so no second `phase_end` for the same run.
+- The patch call reuses the same `Stall` the decision call got (extracted as `make_stall`),
+  so the diagnosis is answered against the same stall it was chosen for.
+
+## Phase 4: Split
+
+- `run_phase` gained `part=(k, Phase)` and `part_count`: a part runs under the stalled
+  phase's integer number (so state/notes/log files stay per-phase), with its own `Phase`
+  as `phase`, its gate and acceptance tests, and the stalled attempt's `after` counters so
+  no fix-round or relay file is overwritten. The design excerpt is spliced:
+  `phase_context(text, phases[:n-1] + [part] + phases[n:], n)`, so the index shows the part
+  in the phase's place; `styre/design.py` was not touched.
+- Part 1 keeps the progress file (like an amend) and reads `notes(n-1)`; the split notice
+  rides in `phase{n}.advice.md` (file `phase{n}.split{k}.md` for the part's own prompt).
+  Parts k > 1 call `clear_progress()` and read `notes(n)`, so part 2 gets part 1's notes and
+  phase n+1 gets the last part's notes unchanged.
+- On `split`, the runner deletes the stalled phase's acceptance files before running the
+  parts: `check()` already guarantees only the last part may keep them, and the last part's
+  `write_acceptance` puts them back at its start. A part stall stops the run naming the
+  part's title, with no second advisor call (the parts share the parent's one-advice budget).
+- The `advice` timeline event carries `titles` only for a split; `summarize` prints
+  `- the advisor split it into: t1; t2` and stores 3-tuples for split entries in
+  `Phase.advice`.
+
+## Phase 5: Docs
+
+- The "One phase" flowchart in `docs/architecture.md` now has one `advisor` node that the
+  four stall edges (relay stuck, BLOCKED/missing state, no diff, retries used up) point at;
+  its `stop` edge and its `amend or split`/`patch` edges are what keep the phase or end the
+  run. The `stop` node keeps its `stop: work left uncommitted` label on the host-failure
+  edge (pi exited non-zero or went silent), and the empty-response edge was split off the
+  BLOCKED/missing edge, which it shared before M4.
+- Wording choice: `CLAUDE.md` step 7 and the DIRECTOR/SKILL rule texts say "stall" for the
+  builder-caused stops the advisor takes up, and "host failure" for the ones that still end
+  the run — matching the milestone's vocabulary rather than inventing a new one.
+- `CLAUDE.md` "Decisions that are settled": the "until a role exists" bullet now says the
+  advisor (M4) takes what a stall needs and the director keeps reviewing a run until M5,
+  instead of naming both as pending.

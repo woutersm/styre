@@ -87,8 +87,8 @@ def pi_config(tmp_path):
 
 
 @pytest.fixture
-def styre(repo, fake_pi, pi_config):
-    """Run the CLI in the repo with the fake agent on PATH.
+def styre(repo, fake_pi, fake_claude, pi_config):
+    """Run the CLI in the repo with the fake agent and fake advisor on PATH.
 
     `plan` maps a prompt file name (`phase1.prompt.md`, `phase1.fix1.md`, ...) to one of the
     fake agent's actions; `default` is used for the names it does not mention.
@@ -102,6 +102,12 @@ def styre(repo, fake_pi, pi_config):
         env["NO_COLOR"] = "1"
         env["FAKE_PI_PLAN"] = json.dumps(plan or {})
         env["FAKE_PI_DEFAULT"] = default
+        # The advisor's settings and fake: a stall asks the fake `claude`, never the real one.
+        cfg = repo.parent / "advisor.json"
+        cfg.write_text(json.dumps({"frontier": {"command": ["claude"], "timeout": 60}}),
+                       encoding="utf-8")
+        env["STYRE_CONFIG"] = str(cfg)
+        env["FAKE_CLAUDE_LOG"] = str(repo.parent / "advisor-calls.log")
         env.update(env_extra or {})
         argv = [sys.executable, "-m", "styre", *args]
         if background:  # for tests that have to look at a run while it is still going

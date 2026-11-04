@@ -50,6 +50,14 @@ class RunDir:
     def fix(self, n, round_):
         return self.root / f"phase{n}.fix{round_}.md"
 
+    def advice(self, n):
+        """The advisor's answer, added to a stalled phase's prompt when it runs again."""
+        return self.root / f"phase{n}.advice.md"
+
+    def split(self, n, k):
+        """Part k's builder prompt: the stalled phase n split into 2 or 3 parts, this run only."""
+        return self.root / f"phase{n}.split{k}.md"
+
     def relay(self, n, k):
         """The prompt for phase n's k-th fresh start after its context outgrew the threshold."""
         return self.root / f"phase{n}.relay{k}.md"

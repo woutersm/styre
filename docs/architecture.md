@@ -37,8 +37,10 @@ flowchart LR
 ```
 
 The director and the model host are outside styre. The director makes every decision that
-needs judgement: what the design says, what a stop means, whether the result is good. The
-model host is wherever pi's config points.
+needs judgement: what the design says, whether the result is good. A stall — builder's
+work that cannot go on — goes to the advisor, which answers with one of amend, split,
+patch or stop; a host failure stops the run without an advisor. The model host is wherever
+pi's config points.
 
 ## Modules
 
@@ -60,6 +62,7 @@ Each module has one job.
 | `state.py` | Reads and judges the agent's state file |
 | `timeline.py` | Appends measured events to `timeline.jsonl` and flushes each line |
 | `summarize.py` | Reads a run back from disk and writes `summary.md`, with per-request model time (prefill, decode, cache hit, tok/s) off the event stamps; `--compare A B` prints two runs side by side |
+| `advisor.py` | The advisor's call and its checks: one advice (amend, split, patch or stop) for a stalled phase, and the advisor's own patch edit |
 | `pi_extensions/*.js` | Loaded into every pi process with `--extension` |
 
 ## One phase
@@ -73,19 +76,26 @@ flowchart TD
     ended -- "context past 75%" --> relays{"did the last fresh<br/>start change the tree<br/>or the progress file?"}
     relays -- yes --> handoff["one resumed turn:<br/>write the progress file"]
     handoff --> step
-    relays -- no --> stop
-    ended -- "pi exited non-zero,<br/>or went silent" --> stop
+    relays -- no --> advisor
+    ended -- "pi exited non-zero,<br/>or went silent" --> stop(["stop: work left uncommitted"])
+    ended -- "empty response" --> stop
     ended -- "agent called styre_finish" --> state{"state file:<br/>DONE?"}
-    state -- "BLOCKED, missing,<br/>or empty response" --> stop
+    state -- "BLOCKED<br/>or missing" --> advisor
     state -- DONE --> accept["write the acceptance files back"]
     accept --> gate["styre runs every gate command,<br/>then the test guard"]
     gate -- green --> diff{"anything staged?"}
     diff -- yes --> commit(["commit, titled after the phase"])
-    diff -- no --> stop
+    diff -- no --> advisor
     gate -- red --> retries{"fix rounds left?"}
     retries -- yes --> fix["fix round: the whole failure,<br/>resumed if the step ended<br/>below 50%, otherwise fresh"]
     fix --> step
-    retries -- no --> stop(["stop: work left uncommitted"])
+    retries -- no --> advisor
+    advisor["the advisor:<br/>amend, split, patch or stop"]
+    advisor -- "amend or split:<br/>run the phase again" --> step
+    advisor -- "patch: edit the tree" --> pgate["styre runs the gate<br/>and the test guard"]
+    pgate -- green --> commit
+    pgate -- red --> stop
+    advisor -- "stop" --> stop
 ```
 
 A run is these phases in order. The first phase that stops ends the run, and

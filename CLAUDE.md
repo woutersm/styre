@@ -35,6 +35,7 @@ migration runs.
 | --- | --- |
 | `styre/cli.py` | The `design` and `simplify` (open interactive `claude` on `/styre-design` and `/styre-simplify`), `check`, `plan`, `run` and `summarize` subcommands; the `styre` console script. |
 | `styre/claude.py` | `claude.call()` for frontier calls with a role, a JSON schema, tools and a timeline line; the settings load. |
+| `styre/advisor.py` | The advisor's call and its checks: `advise()` asks the advisor for one advice (action, reason, text) for a stalled phase, `check` judges the answer, `patch` has the advisor edit the code itself; the `Stall` bundle the runner fills. |
 | `styre/settings.py` | The `styre.json` load: the frontier command and its timeout. |
 | `styre/planner.py` | `planner.problems()`: the check that the planned design kept every line, gate and criteria list of the brief; `PLAN_SCHEMA`.
 | `tests/fake_claude.py` | Test double for `claude`, installed on `PATH` like `fake_pi.py`. |
@@ -116,9 +117,14 @@ to cut one so its gate is green on its own work.
 6. A failure becomes a fix round, up to `--retries`: the whole gate's failures at once, with
    the phase prompt and the progress file — or, when the failed step ended small, resumed in
    its own still-cached session.
-7. Green and a non-empty diff → one commit titled with the phase. Otherwise the run stops,
-   the work stays uncommitted, and `--from-phase N` resumes in the same run directory when
-   the design is the same.
+7. Green and a non-empty diff → one commit titled with the phase. Otherwise the stall goes
+   to the advisor (`styre/advisor.py`), which answers with one action: `amend` adds text to
+   the phase's prompt and runs the phase again, `split` replaces it, in this run only, with
+   2–3 smaller phases, `patch` has the advisor edit the code, after which styre gates and
+   commits it (the commit carries `Styre-Advisor: patch`), or `stop` ends the run with the
+   advisor's reason. A host failure (pi exited non-zero or went silent, an empty response)
+   stops the run as it always has: the work stays uncommitted, and `--from-phase N` resumes
+   in the same run directory when the design is the same.
 
 ## Keeping a phase's context small
 
@@ -175,8 +181,8 @@ AGENTS.md                 committed; only the styre block is managed
   2026-10-25. What was removed then — Claude as an ad-hoc escape hatch and an automatic
   review with no typed output — stays removed: the v2 roles are scheduled, typed and logged.)
 - **Until a role exists, its judgement is the director's** (`skills/styre/DIRECTOR.md`):
-  deciding what a stop means and reviewing a run stay with the person and the interactive
-  assistant until M4 (advisor) and M5 (reviewer) take them over.
+  since M4, the advisor decides what a stall needs; reviewing a run stays with the person
+  and the interactive assistant until M5 (reviewer) takes it over.
 - **Never commit on red.** styre runs the checks itself before every commit, whatever the
   agent says. The checks are not complexity to trim. The test guard is a stop until the v2
   executor replaces it, then a metric (said-done-on-red and test-removal rates) in every

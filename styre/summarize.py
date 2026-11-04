@@ -182,6 +182,7 @@ class Phase:
     self_rounds: int | None = None
     unmet: list[str] = field(default_factory=list)
     sha: str | None = None
+    patched: bool = False
     pi_steps: int = 0
     agent_seconds: float = 0.0
     gate_runs: int = 0
@@ -198,6 +199,9 @@ class Phase:
     compactions_failed: list = field(default_factory=list)  # pi's own error per failed one
     compactions_cancelled: int = 0                   # cancelled by styre's no-compaction extension
     progress: str | None = None                      # the archived progress file, when there is one
+    advice: list[tuple] = field(default_factory=list)
+    # `advice` entries: (action, reason), or (None, error) for a call that could not be made,
+    # or ("split", reason, [part titles]) for an advice that split the phase
 
     @property
     def name(self):
@@ -212,7 +216,7 @@ class Phase:
                     or self.unmet
                     or (self.status and self.status != "committed")
                     or (self.self_rounds and not self.rounds)
-                    or bool(self.tool_errors) or bool(self.relays)
+                    or bool(self.tool_errors) or bool(self.relays) or bool(self.advice)
                     or bool(self.compactions_failed))
 
 
@@ -280,7 +284,14 @@ def read_timeline(run, summary):
         elif kind == "acceptance_restored":
             phase_of(summary.phases, n).acceptance_edits.extend(e.get("paths") or [])
         elif kind == "commit":
-            phase_of(summary.phases, n).sha = e.get("sha")
+            phase = phase_of(summary.phases, n)
+            phase.sha = e.get("sha")
+            phase.patched = bool(e.get("patch"))
+        elif kind == "advice":
+            entry = (e.get("action"), e.get("error") or e.get("reason"))
+            if e.get("action") == "split" and e.get("titles") is not None:
+                entry = ("split", e.get("error") or e.get("reason"), e.get("titles"))
+            phase_of(summary.phases, n).advice.append(entry)
         elif kind == "phase_end":
             phase = phase_of(summary.phases, n)
             phase.title = e.get("title") or phase.title
@@ -462,7 +473,8 @@ def header_lines(summary):
 def phase_table(summary):
     rows = []
     for p in summary.phases:
-        rows.append([p.n, p.name, p.status or "?", (p.sha or "-")[:7],
+        rows.append([p.n, p.name, "committed (patch)" if p.patched else p.status or "?",
+                     (p.sha or "-")[:7],
                      minutes(p.agent_seconds, p.pi_steps),
                      minutes(p.gate_seconds, p.gate_runs),
                      "-" if p.rounds is None else p.rounds,
@@ -610,6 +622,16 @@ def where_to_look(summary):
                        f"{f' ({times}x)' if times > 1 else ''}: {path}")
         for unmet in p.unmet:
             out.append(f"- unmet criterion: {unmet}")
+        for entry in p.advice:
+            action, detail = entry[0], entry[1]
+            if action is None:
+                out.append(f"- the advisor could not be asked: {detail}")
+            elif action == "split":
+                out.append("- the advisor split it into: " + "; ".join(entry[2]))
+            else:
+                out.append(f"- the advisor chose {action}: {detail}")
+        if p.patched:
+            out.append("- the advisor patched it: the commit carries Styre-Advisor: patch")
         # With styre_gate, a red run on the way to green is the workflow; only a gate that
         # stayed red is worth a look. Without it, fix_rounds_self is the agent's own claim.
         red = p.agent_gates.count(False)

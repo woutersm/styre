@@ -37,6 +37,13 @@ def staged_diff():
     return git("diff", "--cached", "-U0")[1]
 
 
+def diff_stat():
+    """`git diff --stat` of everything uncommitted: stage first, because untracked files
+    show no diff until they are in the index."""
+    stage_all()
+    return git("diff", "--cached", "--stat")[1].strip()
+
+
 def has_staged_changes():
     return git("diff", "--cached", "--quiet")[0] != 0
 
