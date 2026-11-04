@@ -198,6 +198,8 @@ class Phase:
     compactions_failed: list = field(default_factory=list)  # pi's own error per failed one
     compactions_cancelled: int = 0                   # cancelled by styre's no-compaction extension
     progress: str | None = None                      # the archived progress file, when there is one
+    advice: list[tuple] = field(default_factory=list)
+    # `advice` entries: (action, reason), or (None, error) for a call that could not be made
 
     @property
     def name(self):
@@ -212,7 +214,7 @@ class Phase:
                     or self.unmet
                     or (self.status and self.status != "committed")
                     or (self.self_rounds and not self.rounds)
-                    or bool(self.tool_errors) or bool(self.relays)
+                    or bool(self.tool_errors) or bool(self.relays) or bool(self.advice)
                     or bool(self.compactions_failed))
 
 
@@ -281,6 +283,8 @@ def read_timeline(run, summary):
             phase_of(summary.phases, n).acceptance_edits.extend(e.get("paths") or [])
         elif kind == "commit":
             phase_of(summary.phases, n).sha = e.get("sha")
+        elif kind == "advice":
+            phase_of(summary.phases, n).advice.append((e.get("action"), e.get("error") or e.get("reason")))
         elif kind == "phase_end":
             phase = phase_of(summary.phases, n)
             phase.title = e.get("title") or phase.title
@@ -610,6 +614,11 @@ def where_to_look(summary):
                        f"{f' ({times}x)' if times > 1 else ''}: {path}")
         for unmet in p.unmet:
             out.append(f"- unmet criterion: {unmet}")
+        for action, detail in p.advice:
+            if action is None:
+                out.append(f"- the advisor could not be asked: {detail}")
+            else:
+                out.append(f"- the advisor chose {action}: {detail}")
         # With styre_gate, a red run on the way to green is the workflow; only a gate that
         # stayed red is worth a look. Without it, fix_rounds_self is the agent's own claim.
         red = p.agent_gates.count(False)

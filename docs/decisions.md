@@ -224,3 +224,22 @@ implementing the nine design steps, plus a CLI in `main()`.
   imports `styre.advisor` back — the module would otherwise be circular.
 - A `check()` refusal triggers the retry; a `claude.call` error (call failed) does not,
   mirroring `styre/cli.py`'s planner retry.
+
+## Phase 2: Stalls go to the advisor: amend and stop
+
+- `run_phase` now returns a `PhaseResult` and takes `advice`/`after`. A stalled attempt's
+  `rounds`/`relays` are the phase totals (fix-round file names continue), but the limits
+  (`--retries`, `MAX_RELAYS`) count the amended attempt's own work only, per the design's
+  "the limits count the amended attempt's own". This is why the loop keeps private
+  `own_rounds`/`own_relays` counters.
+- The five stall kinds are everything in `run_phase` except the `rc != 0` branch and the
+  empty-response branch, which are host failures (`stall=False`) and never reach the
+  advisor.
+- `PhaseResult.gate_report` holds the last gate failure's full report (the `full` half of
+  `verify`'s result); an early stop before any gate run has `""`.
+- `conftest.py`'s `styre` fixture now requests `fake_claude` and points `STYRE_CONFIG` at a
+  settings file in `repo.parent`, so every stall in every end-to-end test reaches the fake
+  `claude` (which prints nothing unless a test sets `FAKE_CLAUDE_REPLY`) and stops with
+  "The advisor could not be asked: ...".
+- `diff_stat()` stages before diffing because untracked files have no `--cached` diff until
+  staged; the staged index is harmless, the phase commit block re-stages.

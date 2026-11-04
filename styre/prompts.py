@@ -182,6 +182,24 @@ for this phase. `reason` is one paragraph for the person; `text` is empty for `s
 """
 
 
+def advice_prompt(n, phase, advice, progress=""):
+    """The prompt that runs a stalled phase again, attached after the phase's own prompt:
+    the advisor's text, the progress file as the stalled attempt left it, and the tree it
+    must start from — the attempt's work, uncommitted."""
+    return f"""'{phase.title}' stalled and an advisor read the run. It is not a new phase:
+the work so far is in the tree, uncommitted, and your progress file below is where the
+last attempt got to. Start from the tree and the failure it left, not from the beginning.
+
+The advisor's amendment — read it before you touch anything:
+
+<advice>
+{advice}
+</advice>
+
+{_progress_block(progress)}
+"""
+
+
 def fix_prompt(n, phase, failure, progress=""):
     """The fix-round prompt for a fresh pi process, attached after the phase's own prompt.
 
