@@ -513,9 +513,8 @@ def advise_stall(ctx, n, result, patches):
     """One advisor call about phase n's stall: the call itself and the run's `advice`
     timeline event for it. Returns (Advice, None) when the advisor is agreed, else
     (None, the sentence it failed with). `patch` is offered while the run has made fewer
-    than MAX_PATCHES of them; a split (Phase 4) widens the list the same way."""
+    than MAX_PATCHES of them; amend, split and stop are always offered."""
     stall = make_stall(ctx, n, result)
-    # A split is always offered; `patch` drops out once MAX_PATCHES is reached.
     actions = (["amend", "split", "patch", "stop"] if patches < advisor.MAX_PATCHES
                else ["amend", "split", "stop"])
     advice, error = advisor.advise(stall, actions, cwd=Path.cwd(),
@@ -585,13 +584,14 @@ def orchestrate(design_path, opts, run):
                 stopped = (f"Stopped at phase {n}: {result.reason}. The advisor's patch left "
                            f"the gate red: {short} Work is left uncommitted.")
                 tl.event("phase_end", phase=n, title=ctx.phase(n).title, status="stopped",
-                         reason=short, rounds=0, relays=0,
+                         reason=short, rounds=result.rounds, relays=result.relays,
                          fix_rounds_self=None, unmet_criteria=[])
                 break
             why = commit_phase(ctx, n, ctx.phase(n), patched=True)
             tl.event("phase_end", phase=n, title=ctx.phase(n).title,
                      status="committed" if why is None else "stopped",
-                     reason=why, rounds=0, relays=0, fix_rounds_self=None, unmet_criteria=[])
+                     reason=why, rounds=result.rounds, relays=result.relays,
+                     fix_rounds_self=None, unmet_criteria=[])
             patches += 1
             if why is None:
                 committed += 1

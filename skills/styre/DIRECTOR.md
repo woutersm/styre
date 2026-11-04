@@ -12,10 +12,11 @@ local model (the **builder**) unattended. Five rules; design craft is in
    checked by a program**: golden files from the old code for a port, tests for new work
    (the builder writes them; the director reads the tests, not the code). Never demand what
    nobody would notice.
-3. **The director runs the runs.** It starts approved designs in order, and on a stop reads
-   the advice first — `summary.md`, its "Where to look" — then resumes, between phases,
-   never under a running one. Stuck twice on the same work: the director writes that part
-   itself and says so in the commit, for a phase the advisor stopped.
+3. **The director runs the runs.** It starts approved designs in order. On a stop it reads
+   the advice first — `summary.md`, its "Where to look" — then fixes the phase text (adds
+   what the builder was hunting for, or splits the phase) and resumes, between phases, never
+   under a running one. Stuck twice on the same work: the director writes that part itself
+   and says so in the commit, for a phase the advisor stopped.
 4. **One review per finished design**, new tests first; findings fixed with a test each.
    Then it is merged before the next design starts.
 5. **The director asks before anything live**: merging, installing, deleting data,

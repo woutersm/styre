@@ -92,7 +92,9 @@ flowchart TD
     retries -- no --> advisor
     advisor["the advisor:<br/>amend, split, patch or stop"]
     advisor -- "amend or split:<br/>run the phase again" --> step
-    advisor -- "patch: edit the tree,<br/>then the gate" --> gate
+    advisor -- "patch: edit the tree" --> pgate["styre runs the gate<br/>and the test guard"]
+    pgate -- green --> commit
+    pgate -- red --> stop
     advisor -- "stop" --> stop
 ```
 
