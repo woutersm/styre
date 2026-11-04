@@ -182,6 +182,36 @@ for this phase. `reason` is one paragraph for the person; `text` is empty for `s
 """
 
 
+def patch_prompt(stall, diagnosis):
+    """The prompt of the advisor's patch call: the diagnosis and the phase, and the rules
+    for editing the tree so the gate passes. `stall` is read by attribute, as
+    `advisor_prompt` reads it; `styre.advisor` imports this, so this module must not import
+    it back."""
+    gate = "\n".join(f"- {cmd}" for cmd in stall.phase.gate)
+    return f"""A local model, through the pi coding agent, built one phase of a design unattended,
+and the phase stalled. You have read the run and found one hard part the builder will not
+get right. Now you make the edit yourself, in the tree as the builder left it.
+
+The stall: {stall.reason}
+
+<diagnosis>
+{diagnosis}
+</diagnosis>
+
+<phase>
+{stall.context}
+</phase>
+
+The phase's gate commands:
+{gate}
+
+Edit the working tree so the gate passes. Run the gate commands with Bash to check.
+Do not edit, skip or delete tests: styre's test guard rejects it. Do not edit the
+acceptance test files: styre writes them back. Do not commit, switch branches or touch
+.styre/. Finish by returning a `summary` of what you changed.
+"""
+
+
 def advice_prompt(n, phase, advice, progress=""):
     """The prompt that runs a stalled phase again, attached after the phase's own prompt:
     the advisor's text, the progress file as the stalled attempt left it, and the tree it

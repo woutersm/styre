@@ -243,3 +243,16 @@ implementing the nine design steps, plus a CLI in `main()`.
   "The advisor could not be asked: ...".
 - `diff_stat()` stages before diffing because untracked files have no `--cached` diff until
   staged; the staged index is harmless, the phase commit block re-stages.
+
+## Phase 3: Patch
+
+- The commit block of `run_phase` moved into `commit_phase(ctx, n, phase, patched=False)`:
+  it stages, applies the no-staged-diff rule, commits and writes the `commit` event in one
+  place. The patch path passes `patched=True`, which adds the `Styre-Advisor: patch` trailer
+  (`git commit -m` takes the blank line and trailer unchanged) and sets `patch=True` on the
+  event; `summarize` reads that as `Phase.patched` and prints `committed (patch)`.
+- A red patch gate stops the run with its own `phase_end` (status `stopped`) rather than
+  going through a builder fix round — the phase's stall was already the last attempt of it,
+  so no second `phase_end` for the same run.
+- The patch call reuses the same `Stall` the decision call got (extracted as `make_stall`),
+  so the diagnosis is answered against the same stall it was chosen for.

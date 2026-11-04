@@ -11,11 +11,14 @@ from dataclasses import dataclass, field
 
 from styre import claude
 from styre.design import Phase, parse_phases, validate
-from styre.prompts import advisor_prompt
+from styre.prompts import advisor_prompt, patch_prompt
 
 ACTIONS = ("amend", "split", "patch", "stop")
 MAX_PATCHES = 2
 READ_TOOLS = ["Read", "Grep", "Glob"]
+PATCH_TOOLS = ["Read", "Grep", "Glob", "Edit", "Write", "Bash"]
+PATCH_SCHEMA = {"type": "object", "properties": {"summary": {"type": "string"}},
+                "required": ["summary"], "additionalProperties": False}
 
 
 @dataclass
@@ -117,3 +120,12 @@ def advise(stall, actions, *, cwd, timeline, log_dir):
     if advice is not None:
         return advice, None
     return None, problems[0]
+
+
+def patch(stall, advice, *, cwd, timeline, log_dir) -> str | None:
+    """The patch call: the advisor edits the tree itself. Returns `result.error` (None on
+    success). It is not retried: a failed call may already have edited the tree, and the
+    gate, not the answer, decides whether the phase goes on."""
+    result = claude.call("advisor", patch_prompt(stall, advice.text), PATCH_SCHEMA,
+                         PATCH_TOOLS, cwd=cwd, timeline=timeline, log_dir=log_dir)
+    return result.error

@@ -441,14 +441,7 @@ def run_phase(ctx, n, advice=None, after=None):
         print(f"    fix round {rounds} of {opts.retries} ({how})", flush=True)
 
     if why is None:
-        stage_all()
-        if not has_staged_changes():
-            why = "gate passed but the phase changed nothing (no staged diff)"
-        else:
-            commit(phase.title)
-            sha = head_sha()
-            tl.event("commit", phase=n, sha=sha, subject=phase.title)
-            print(f"    ✓ committed {sha[:7]}  {phase.title}", flush=True)
+        why = commit_phase(ctx, n, phase, patched=False)
 
     tl.event("phase_end", phase=n, title=phase.title,
              status="committed" if why is None else "stopped",
@@ -459,15 +452,39 @@ def run_phase(ctx, n, advice=None, after=None):
                        rounds=rounds, relays=relays)
 
 
-def advise_stall(ctx, n, result):
+def commit_phase(ctx, n, phase, patched=False):
+    """Stage and commit a phase whose gate is green. Returns None on the commit, else the
+    reason the phase is not committed — the no-staged-diff rule and the `commit` event
+    live here, for both the builder's and the advisor's patch paths."""
+    tl = ctx.tl
+    stage_all()
+    if not has_staged_changes():
+        return "gate passed but the phase changed nothing (no staged diff)"
+    commit(phase.title if not patched else f"{phase.title}\n\nStyre-Advisor: patch")
+    sha = head_sha()
+    tl.event("commit", phase=n, sha=sha, subject=phase.title, patch=patched)
+    print(f"    ✓ committed {sha[:7]}  {phase.title}" + (" (advisor patch)" if patched else ""),
+          flush=True)
+    return None
+
+
+def make_stall(ctx, n, result):
+    """The advisor's view of phase n's stall: what stopped, what it can read, and where the
+    readable log is."""
+    return advisor.Stall(n=str(n), phase=ctx.phase(n), context=ctx.context(n),
+                         reason=result.reason, progress=read_progress(),
+                         gate_report=result.gate_report, diff_stat=diff_stat(),
+                         log=ctx.run.log(n).as_posix())
+
+
+def advise_stall(ctx, n, result, patches):
     """One advisor call about phase n's stall: the call itself and the run's `advice`
     timeline event for it. Returns (Advice, None) when the advisor is agreed, else
-    (None, the sentence it failed with)."""
-    stall = advisor.Stall(n=str(n), phase=ctx.phase(n), context=ctx.context(n),
-                          reason=result.reason, progress=read_progress(),
-                          gate_report=result.gate_report, diff_stat=diff_stat(),
-                          log=ctx.run.log(n).as_posix())
-    advice, error = advisor.advise(stall, ["amend", "stop"], cwd=Path.cwd(),
+    (None, the sentence it failed with). `patch` is offered while the run has made fewer
+    than MAX_PATCHES of them; a split (Phase 4) widens the list the same way."""
+    stall = make_stall(ctx, n, result)
+    actions = ["amend", "patch", "stop"] if patches < advisor.MAX_PATCHES else ["amend", "stop"]
+    advice, error = advisor.advise(stall, actions, cwd=Path.cwd(),
                                    timeline=ctx.tl, log_dir=ctx.run.root / "logs")
     ctx.tl.event("advice", phase=n, action=advice.action if advice else None,
                  reason=advice.reason if advice else None, error=error)
@@ -491,7 +508,7 @@ def orchestrate(design_path, opts, run):
              pi_config=str(PI_CONFIG_DIR),
              phases=len(ctx.phases), from_phase=opts.from_phase, retries=opts.retries)
 
-    committed, stopped = 0, None
+    committed, stopped, patches = 0, None, 0
     for n in range(opts.from_phase, len(ctx.phases) + 1):
         result = run_phase(ctx, n)
         if result.reason is None:
@@ -501,7 +518,7 @@ def orchestrate(design_path, opts, run):
             # A host failure stops the run as it always has: the advisor is never called.
             stopped = f"Stopped at phase {n}: {result.reason}. Work is left uncommitted."
             break
-        advice, error = advise_stall(ctx, n, result)
+        advice, error = advise_stall(ctx, n, result, patches)
         if advice is None:
             stopped = (f"Stopped at phase {n}: {result.reason}. The advisor could not be "
                        f"asked: {error} Work is left uncommitted.")
@@ -509,6 +526,41 @@ def orchestrate(design_path, opts, run):
         if advice.action == "stop":
             stopped = (f"Stopped at phase {n}: {result.reason}. The advisor stopped it: "
                        f"{advice.reason} Work is left uncommitted.")
+            break
+        if advice.action == "patch":
+            # The advisor edits the tree itself; the gate, not its answer, decides. No
+            # builder fix round after a red patch: the run stops.
+            error = advisor.patch(make_stall(ctx, n, result), advice, cwd=Path.cwd(),
+                                  timeline=tl, log_dir=run.root / "logs")
+            if error is not None:
+                stopped = (f"Stopped at phase {n}: {result.reason}. The advisor's patch call "
+                           f"failed: {error} Work is left uncommitted.")
+                break
+            # The advisor may have touched tests: put the approved ones back, then gate.
+            edited = write_acceptance(ctx.phase(n), Path.cwd())
+            if edited:
+                tl.event("acceptance_restored", phase=n, step="patch", paths=edited)
+                print(f"    acceptance tests restored: {', '.join(edited)}", flush=True)
+            failure = verify(ctx.phase(n), run.log(n), gate_timeout=opts.gate_timeout,
+                             allow_test_changes=opts.allow_test_changes, timeline=tl,
+                             phase_n=n, step="patch")
+            if failure is not None:
+                short, _ = failure
+                stopped = (f"Stopped at phase {n}: {result.reason}. The advisor's patch left "
+                           f"the gate red: {short} Work is left uncommitted.")
+                tl.event("phase_end", phase=n, title=ctx.phase(n).title, status="stopped",
+                         reason=short, rounds=0, relays=0,
+                         fix_rounds_self=None, unmet_criteria=[])
+                break
+            why = commit_phase(ctx, n, ctx.phase(n), patched=True)
+            tl.event("phase_end", phase=n, title=ctx.phase(n).title,
+                     status="committed" if why is None else "stopped",
+                     reason=why, rounds=0, relays=0, fix_rounds_self=None, unmet_criteria=[])
+            patches += 1
+            if why is None:
+                committed += 1
+                continue
+            stopped = f"Stopped at phase {n}: {why} Work is left uncommitted."
             break
         # `amend`: the phase runs again on the tree as it is, with the advice in its
         # prompt. A second stall of the same phase stops the run; there is no second call.

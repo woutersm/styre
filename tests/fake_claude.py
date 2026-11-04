@@ -8,10 +8,13 @@ and its stdin as one JSON line to $FAKE_CLAUDE_LOG and exits with $FAKE_CLAUDE_E
 
 When $FAKE_CLAUDE_REPLY names a directory instead of a file, the call numbered k — counted
 through the lines already in $FAKE_CLAUDE_LOG, before its own line is appended — prints
-<dir>/<k>.json, so a test can hand a role a first and a second answer.
+<dir>/<k>.json, so a test can hand a role a first and a second answer. When <dir>/<k>.files/
+exists, that tree is first copied into the working directory, so a call can edit files the
+way a patch does before it answers.
 """
 import json
 import os
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -37,6 +40,9 @@ def main():
     if sleep:
         time.sleep(float(sleep))
     if target is not None:
+        files_dir = target.parent / f"{target.stem}.files"
+        if files_dir.is_dir():
+            shutil.copytree(files_dir, Path.cwd(), dirs_exist_ok=True)
         sys.stdout.write(target.read_text(encoding="utf-8") + "\n")
     if log_path:
         with open(log_path, "a", encoding="utf-8") as f:
