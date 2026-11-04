@@ -243,7 +243,6 @@ from styre.advisor import (
     schema,
     split_problems,
 )
-
 from styre.design import parse_phases
 from styre.prompts import advisor_prompt
 from styre.timeline import Timeline
@@ -1020,8 +1019,8 @@ import subprocess
 from pathlib import Path
 
 from conftest import DESIGN
-from styre.advisor import PATCH_SCHEMA, PATCH_TOOLS, Advice, Stall, patch
 
+from styre.advisor import PATCH_SCHEMA, PATCH_TOOLS, Advice, Stall, patch
 from styre.design import parse_phases
 from styre.prompts import patch_prompt
 from styre.timeline import Timeline
