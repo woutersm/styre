@@ -200,7 +200,8 @@ class Phase:
     compactions_cancelled: int = 0                   # cancelled by styre's no-compaction extension
     progress: str | None = None                      # the archived progress file, when there is one
     advice: list[tuple] = field(default_factory=list)
-    # `advice` entries: (action, reason), or (None, error) for a call that could not be made
+    # `advice` entries: (action, reason), or (None, error) for a call that could not be made,
+    # or ("split", reason, [part titles]) for an advice that split the phase
 
     @property
     def name(self):
@@ -287,7 +288,10 @@ def read_timeline(run, summary):
             phase.sha = e.get("sha")
             phase.patched = bool(e.get("patch"))
         elif kind == "advice":
-            phase_of(summary.phases, n).advice.append((e.get("action"), e.get("error") or e.get("reason")))
+            entry = (e.get("action"), e.get("error") or e.get("reason"))
+            if e.get("action") == "split" and e.get("titles") is not None:
+                entry = ("split", e.get("error") or e.get("reason"), e.get("titles"))
+            phase_of(summary.phases, n).advice.append(entry)
         elif kind == "phase_end":
             phase = phase_of(summary.phases, n)
             phase.title = e.get("title") or phase.title
@@ -618,9 +622,12 @@ def where_to_look(summary):
                        f"{f' ({times}x)' if times > 1 else ''}: {path}")
         for unmet in p.unmet:
             out.append(f"- unmet criterion: {unmet}")
-        for action, detail in p.advice:
+        for entry in p.advice:
+            action, detail = entry[0], entry[1]
             if action is None:
                 out.append(f"- the advisor could not be asked: {detail}")
+            elif action == "split":
+                out.append("- the advisor split it into: " + "; ".join(entry[2]))
             else:
                 out.append(f"- the advisor chose {action}: {detail}")
         if p.patched:

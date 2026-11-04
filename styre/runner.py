@@ -280,7 +280,7 @@ def handoff(ctx, n, step, k, context, relay_at):
     archive_progress(run, n)
 
 
-def run_phase(ctx, n, advice=None, after=None):
+def run_phase(ctx, n, advice=None, after=None, part=None, part_count=None):
     """Run one phase to a verdict, committing it if everything passes. Returns the
     `PhaseResult`.
 
@@ -288,6 +288,11 @@ def run_phase(ctx, n, advice=None, after=None):
     this the amended attempt: it starts on the tree as the stalled attempt left it, with the
     advice added to the phase's prompt, and its fix-round and relay numbers continue where
     `after` stopped, so `phase1.fix3.md` follows `phase1.fix2.md`.
+
+    `part` (a `(k, Phase)` pair) runs part `k` of a split of phase n, in this run only: the
+    phase is the part's `Phase`, under the stalled phase's number, with the part's own gate
+    and notes. Part 1 keeps the progress file and gets the split notice in an advice file;
+    parts after it start clean. `after` still carries the counters from the attempt before.
 
     A phase is a sequence of pi processes: the builder, then fix rounds after a red gate. Two
     things keep each one's context small (see CLAUDE.md, "Context"):
@@ -307,7 +312,34 @@ def run_phase(ctx, n, advice=None, after=None):
 
     stall = True          # every stop is a stall until proven to be the host's
     gate_report = ""
-    if advice is not None:
+    if part is not None:
+        # One part of a split phase, running under the stalled phase's number n. Its design
+        # excerpt shows the part in place of the phase, so the index stays an honest list.
+        k, phase = part
+        run, opts, tl = ctx.run, ctx.opts, ctx.tl
+        context = phase_context(ctx.text, ctx.phases[:n - 1] + [phase] + ctx.phases[n:], n)
+        previous = run.notes(n - 1) if k == 1 else run.notes(n)  # part 1: as phase n did
+        notes = previous.read_text(encoding="utf-8").strip() if previous.exists() else ""
+        builder = run.split(n, k)
+        builder.write_text(build_prompt(context, n, phase, notes), encoding="utf-8")
+        if k == 1:
+            # The stalled attempt's progress file is its start, like an amend, and the
+            # split notice rides in the advice file after the part's own prompt.
+            advice_file = run.advice(n)
+            text = (f"The phase was split; you build part 1 of {part_count}, {phase.title}. "
+                    "The parts after it build the rest.")
+            advice_file.write_text(advice_prompt(n, phase, text, read_progress()), encoding="utf-8")
+            task = [builder, advice_file]
+        else:
+            clear_progress()
+            task = [builder]
+        write_acceptance(phase, Path.cwd())  # the last part writes the phase's tests back
+        start_phase_tools(n, phase.gate, opts.gate_timeout)
+        prompts, session = task, None
+        rounds, relays = after.rounds, after.relays
+        first_step = f"split {k}"
+        own_rounds, own_relays = 0, 0
+    elif advice is not None:
         # The amended attempt. The progress file is its start, not something to clear, and
         # the stalled attempt's uncommitted work is in the tree.
         builder = run.prompt(n)
@@ -483,11 +515,15 @@ def advise_stall(ctx, n, result, patches):
     (None, the sentence it failed with). `patch` is offered while the run has made fewer
     than MAX_PATCHES of them; a split (Phase 4) widens the list the same way."""
     stall = make_stall(ctx, n, result)
-    actions = ["amend", "patch", "stop"] if patches < advisor.MAX_PATCHES else ["amend", "stop"]
+    # A split is always offered; `patch` drops out once MAX_PATCHES is reached.
+    actions = (["amend", "split", "patch", "stop"] if patches < advisor.MAX_PATCHES
+               else ["amend", "split", "stop"])
     advice, error = advisor.advise(stall, actions, cwd=Path.cwd(),
                                    timeline=ctx.tl, log_dir=ctx.run.root / "logs")
     ctx.tl.event("advice", phase=n, action=advice.action if advice else None,
-                 reason=advice.reason if advice else None, error=error)
+                 reason=advice.reason if advice else None, error=error,
+                 titles=[p.title for p in advice.phases]
+                 if advice is not None and advice.action == "split" else None)
     return advice, error
 
 
@@ -561,6 +597,23 @@ def orchestrate(design_path, opts, run):
                 committed += 1
                 continue
             stopped = f"Stopped at phase {n}: {why} Work is left uncommitted."
+            break
+        if advice.action == "split":
+            # The parts replace the phase in this run only; the design file is not touched.
+            # The last part keeps the phase's acceptance tests, so the earlier parts' gates
+            # must not run them: delete the files, the last part writes them back at start.
+            for path, _content in ctx.phase(n).acceptance:
+                (Path.cwd() / path).unlink(missing_ok=True)
+            for k, part_phase in enumerate(advice.phases, 1):
+                result = run_phase(ctx, n, part=(k, part_phase), after=result,
+                                   part_count=len(advice.phases))
+                if result.reason is not None:
+                    stopped = (f"Stopped at phase {n} ({part_phase.title}): {result.reason}, "
+                               "after the advisor's split. Work is left uncommitted.")
+                    break
+            if stopped is None:
+                committed += len(advice.phases)
+                continue
             break
         # `amend`: the phase runs again on the tree as it is, with the advice in its
         # prompt. A second stall of the same phase stops the run; there is no second call.

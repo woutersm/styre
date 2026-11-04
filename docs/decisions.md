@@ -256,3 +256,23 @@ implementing the nine design steps, plus a CLI in `main()`.
   so no second `phase_end` for the same run.
 - The patch call reuses the same `Stall` the decision call got (extracted as `make_stall`),
   so the diagnosis is answered against the same stall it was chosen for.
+
+## Phase 4: Split
+
+- `run_phase` gained `part=(k, Phase)` and `part_count`: a part runs under the stalled
+  phase's integer number (so state/notes/log files stay per-phase), with its own `Phase`
+  as `phase`, its gate and acceptance tests, and the stalled attempt's `after` counters so
+  no fix-round or relay file is overwritten. The design excerpt is spliced:
+  `phase_context(text, phases[:n-1] + [part] + phases[n:], n)`, so the index shows the part
+  in the phase's place; `styre/design.py` was not touched.
+- Part 1 keeps the progress file (like an amend) and reads `notes(n-1)`; the split notice
+  rides in `phase{n}.advice.md` (file `phase{n}.split{k}.md` for the part's own prompt).
+  Parts k > 1 call `clear_progress()` and read `notes(n)`, so part 2 gets part 1's notes and
+  phase n+1 gets the last part's notes unchanged.
+- On `split`, the runner deletes the stalled phase's acceptance files before running the
+  parts: `check()` already guarantees only the last part may keep them, and the last part's
+  `write_acceptance` puts them back at its start. A part stall stops the run naming the
+  part's title, with no second advisor call (the parts share the parent's one-advice budget).
+- The `advice` timeline event carries `titles` only for a split; `summarize` prints
+  `- the advisor split it into: t1; t2` and stores 3-tuples for split entries in
+  `Phase.advice`.
