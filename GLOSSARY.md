@@ -101,7 +101,27 @@ The action in which the advisor edits the code itself; styre then runs the gate 
 the phase with a `Styre-Advisor: patch` trailer.
 
 **Reviewer**:
-The frontier model, called at a milestone's end to review the committed work.
+The frontier model, called once when a run has committed its last phase, to review the
+run's work. It returns findings.
+
+**Finding**:
+One problem the reviewer names in a finished run. A finding with a test that fails on the
+tree is fixed in the same run; one without is reported only.
+_Avoid_: issue, comment
+
+**Fix phase**:
+A phase styre adds at the end of a run, in that run only, that makes the findings' failing
+tests pass. Built, gated and committed like any phase.
+_Avoid_: review phase, follow-up
+
+**Memory**:
+`memory.md`: short facts about the target repository that the builder learned and later
+phases should know, kept within a fixed size and shown to every phase.
+_Avoid_: notes (those are `notes-next.md`, one hop), decisions log, knowledge base
+
+**Curator**:
+The local model, called after each phase commit, that rewrites the memory from what the
+phase reported.
 
 **Person**:
 Whoever approves the design before a run and reviews the result.

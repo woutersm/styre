@@ -192,9 +192,11 @@ AGENTS.md                 committed; only the styre block is managed
   within a phase too: a step that outgrows its budget continues from its progress file.
 - **Handoff state is split by lifetime**: decisions permanent and committed, notes one
   phase, progress one phase's steps, status machine-readable. Nothing inventories the repo.
-- **The decisions log is written but not transmitted.** It is the agent's ungated
-  self-report; passing it forward as fact contradicts the rule above. `notes-next.md` is the
-  phase-to-phase channel.
+- **The decisions log is written but never transmitted whole.** It is the agent's ungated
+  self-report. From M5 the curator reads a phase's new section, with its `notes-next.md`, and
+  distils both into `docs/memory.md` (4,000 characters at most), which every later phase
+  reads. No prompt includes the log itself. `notes-next.md` stays the phase-to-phase channel.
+  (Reopened 2026-11-06 by the owner; `docs/adr/0022`.)
 - **The timeout is idle time, not a deadline**: a hung pi process stalls a whole run, a
   long productive phase must not be killed.
 - **The agent reports through tools** (`styre-tools.js`) writing the same `.styre/` files;
