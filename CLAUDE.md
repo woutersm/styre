@@ -37,7 +37,7 @@ migration runs.
 | `styre/claude.py` | `claude.call()` for frontier calls with a role, a JSON schema, tools and a timeline line; the settings load. |
 | `styre/advisor.py` | The advisor's call and its checks: `advise()` asks the advisor for one advice (action, reason, text) for a stalled phase, `check` judges the answer, `patch` has the advisor edit the code itself; the `Stall` bundle the runner fills. |
 | `styre/settings.py` | The `styre.json` load: the frontier command and its timeout. |
-| `styre/planner.py` | `planner.problems()`: the check that the planned design kept every line, gate and criteria list of the brief; `PLAN_SCHEMA`.
+| `styre/planner.py` | `planner.problems()`: the check that the planned design kept every line, gate and criteria list of the brief, and put no skip marker in an acceptance test; `PLAN_SCHEMA`. |
 | `tests/fake_claude.py` | Test double for `claude`, installed on `PATH` like `fake_pi.py`. |
 | `styre/config.py` | Constants (`PI`, `PI_CONFIG_DIR`, `WORK`, `DECISIONS`, `AGENTS`, `EXCLUDES`, the context fractions), `context_window()`, and the `RunOptions` bundle. |
 | `styre/design.py` | Parsing a design into `Phase` objects; `phase_context()`; `validate()` (errors) and `advisories()` (warnings); the `check` rendering. |

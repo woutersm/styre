@@ -103,7 +103,10 @@ For each phase, add under its text:
   Use the repository's test framework and conventions, and put the file where this phase's
   gate command collects it. Each path must be new, and never a path another phase uses. If
   the brief already has an `### Acceptance tests` section, keep it as it is; you may add
-  files to it;
+  files to it. Put no skip or xfail marker in these files, not even for a platform: styre's
+  test guard rejects an added one, so the phase could never be committed. The builder cannot
+  edit these files and the gate's linter checks them, so follow the repository's lint rules,
+  import order included;
 - the exact signatures, types and constants it calls or changes, copied from the source;
 - for every library the repository has not used before: the imports, the calls in the order
   the phase makes them and what each returns, in 15 lines or fewer, read from the installed

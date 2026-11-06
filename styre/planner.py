@@ -11,6 +11,7 @@ threw away three finished heim-mcp plans on 2026-11-01.
 from __future__ import annotations
 
 from styre.design import parse_phases, phase_context, preamble, validate
+from styre.guard import SKIP_RE
 
 PLAN_SCHEMA = {"type": "object", "properties": {"design": {"type": "string"}},
                "required": ["design"], "additionalProperties": False}
@@ -59,6 +60,15 @@ def problems(brief, planned):
         if b.criteria != p.criteria:
             out.append(f"Phase {i} changed the brief's exit criteria: "
                        f"{b.criteria} became {p.criteria}.")
+
+    # A skip marker in an acceptance file is one the test guard rejects when styre stages the
+    # file, and the builder cannot remove it: styre writes the file back before every gate.
+    # The M4 plan (2026-11-03) put a Windows skipif in three of them.
+    for i, p in enumerate(pph, 1):
+        for path, content in p.acceptance:
+            if content and SKIP_RE.search(content):
+                out.append(f"Phase {i}'s acceptance test '{path}' has a skip or xfail marker, "
+                           "which styre's test guard rejects.")
 
     for i in range(1, len(pph) + 1):
         size = len(phase_context(planned, pph, i))

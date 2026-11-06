@@ -13,6 +13,7 @@ import pytest
 from conftest import DESIGN  # noqa: E402
 
 from styre import planner
+from styre.prompts import planner_prompt
 
 ROOT = Path(__file__).resolve().parent.parent
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -295,6 +296,21 @@ def test_problems_names_a_dropped_line_of_the_acceptance_section():
     assert "assert True" not in dropped  # the line really is gone
     assert any("Phase 1 dropped the brief's line" in p
                for p in planner.problems(acceptance_brief(), dropped))
+
+
+def test_problems_names_a_skip_marker_in_an_acceptance_test():
+    marked = acceptance_planned().replace(
+        "def test_accept_phase1b():",
+        "import pytest\n\n\n@pytest.mark.skipif(True, reason=\"x\")\ndef test_accept_phase1b():")
+    assert planner.problems(acceptance_brief(), marked) == [
+        "Phase 1's acceptance test 'tests/test_accept_phase1b.py' has a skip or xfail marker, "
+        "which styre's test guard rejects."]
+
+
+def test_the_planner_prompt_forbids_skip_markers_in_acceptance_tests():
+    prompt = planner_prompt("# Brief\n", 120_000)
+    assert "Put no skip or xfail marker in these files" in prompt
+    assert "follow the repository's lint rules" in prompt
 
 
 def test_planned_design_keeps_and_extends_the_acceptance_section(tmp_path, monkeypatch,
