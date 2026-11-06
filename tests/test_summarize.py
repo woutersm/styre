@@ -1,6 +1,6 @@
 """The summarize readers, against the captured pi output in tests/fixtures/."""
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from styre.rundir import RunDir
@@ -104,7 +104,9 @@ def test_stamped_events_yield_the_timestamp_and_drop_it_in_read_events(tmp_path)
     path.write_text('{"ts": "2026-09-20T22:00:00+02:00", "line": "{\\"type\\": \\"agent_end\\"}"}\n' +
                     '{"line": "{\\"type\\": \\"turn_end\\"}"}\n', encoding="utf-8")
     stamped = list(read_stamped_events(path))
-    assert stamped[0][0] == datetime(2026, 9, 20, 22, 0, 0).astimezone()
+    # The stamp carries its own offset, so the expected instant must too: a naive time made
+    # local by .astimezone() matched only on a machine at +02:00, and CI runs in UTC.
+    assert stamped[0][0] == datetime(2026, 9, 20, 22, 0, 0, tzinfo=timezone(timedelta(hours=2)))
     assert stamped[1][0] is None                          # missing ts stays None
     assert [e["type"] for e in read_events(path)] == ["agent_end", "turn_end"]
 
